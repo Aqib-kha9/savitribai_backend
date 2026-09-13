@@ -4,6 +4,7 @@ import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
 import { env } from './config/env.js';
+import { corsOptions } from './config/cors.js';
 import { requestId } from './middleware/request-id.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
 import { apiRateLimiter } from './middleware/rate-limiter.js';
@@ -27,7 +28,7 @@ import { dashboardRouter } from './modules/dashboard/dashboard.routes.js';
 const app = express();
 app.disable('x-powered-by');
 app.use(helmet());
-app.use(cors({ origin: env.webOrigin, credentials: true }));
+app.use(cors(corsOptions));
 app.use(compression());
 // Request correlation id must be assigned before body parsing so even parse
 // failures carry a requestId in the error envelope.
