@@ -8,19 +8,31 @@ import { env } from './env.js';
  * dev server, the deployed panel and any preview URL without resorting to the
  * insecure `*` wildcard (which cannot be combined with credentials anyway).
  *
+ * Exact matches are preferred. A single `*` may appear in a host entry to cover
+ * rotatable deployment URLs (for example `https://sfmspmy-*.vercel.app`); the
+ * pattern is anchored to the full origin so it can never widen to another host.
+ *
  * Requests without an `Origin` header are allowed: CORS is a browser protection
  * and origin-less callers (health probes, server-to-server calls, native mobile
  * HTTP clients) gain no access from it. When an unknown origin is supplied the
  * request is not rejected outright — the CORS headers are simply withheld, so
  * the browser blocks it while logging stays clean.
  */
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function matchesAllowedOrigin(origin, allowed) {
+    if (allowed === origin)
+        return true;
+    if (!allowed.includes('*'))
+        return false;
+    const pattern = allowed.split('*').map(escapeRegExp).join('.*');
+    return new RegExp(`^${pattern}$`, 'i').test(origin);
+}
 export const corsOptions = {
     origin(origin, callback) {
-        if (!origin || env.webOrigins.includes(origin)) {
-            callback(null, true);
-            return;
-        }
-        callback(null, false);
+        const allowed = !origin || env.webOrigins.some((entry) => matchesAllowedOrigin(origin, entry));
+        callback(null, allowed);
     },
     credentials: true,
 };
