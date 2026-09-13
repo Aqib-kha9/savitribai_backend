@@ -7,7 +7,19 @@ import { z } from 'zod';
 const environmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_PORT: z.coerce.number().int().positive().default(4000),
-  WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
+  // Comma-separated allow-list of browser origins permitted by CORS. Multiple
+  // values are supported so a deployment can expose the same API to the admin
+  // panel (and any preview/staging origins) without widening the policy to '*'.
+  WEB_ORIGIN: z
+    .string()
+    .default('http://localhost:5173')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter((origin) => origin.length > 0),
+    )
+    .pipe(z.array(z.string().url()).min(1, 'WEB_ORIGIN must contain at least one absolute URL')),
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1).default('redis://localhost:6379'),
   JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 characters'),
@@ -48,7 +60,7 @@ export const env = {
   isProduction: data.NODE_ENV === 'production',
   isDevelopment: data.NODE_ENV === 'development',
   port: data.API_PORT,
-  webOrigin: data.WEB_ORIGIN,
+  webOrigins: data.WEB_ORIGIN,
   databaseUrl: data.DATABASE_URL,
   redisUrl: data.REDIS_URL,
   jwt: {
