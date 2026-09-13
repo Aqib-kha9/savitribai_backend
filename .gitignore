@@ -1,0 +1,23 @@
+# Dependencies / build output
+node_modules/
+dist/
+build/
+coverage/
+
+# Environment files — never commit real secrets (only the template is tracked)
+.env
+.env.*
+!.env.example
+
+# Certificates & keys (public CA cert used for DB TLS is intentionally tracked)
+*.pem
+!ca.pem
+*.key
+*.crt
+secrets/
+
+# Logs / editor / OS
+*.log
+.DS_Store
+.vscode/
+.idea/

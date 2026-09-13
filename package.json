@@ -1,0 +1,41 @@
+{
+    "name": "@cooperative-finance/api",
+    "version": "0.2.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "tsx watch src/server.ts",
+        "build": "tsc -p tsconfig.json",
+        "start": "node dist/server.js",
+        "lint": "eslint .",
+        "test": "vitest run",
+        "migrate": "tsx src/database/migrate.ts",
+        "seed": "tsx src/database/seed.ts",
+        "db:setup": "tsx src/database/migrate.ts && tsx src/database/seed.ts"
+    },
+    "dependencies": {
+        "@node-rs/argon2": "^2.0.2",
+        "compression": "^1.7.5",
+        "cors": "^2.8.5",
+        "dotenv": "^16.4.7",
+        "express": "^5.1.0",
+        "helmet": "^8.1.0",
+        "jose": "^6.0.11",
+        "pdf-lib": "^1.17.1",
+        "pg": "^8.14.1",
+        "pino": "^9.6.0",
+        "zod": "^3.24.2"
+    },
+    "devDependencies": {
+        "@types/compression": "^1.7.5",
+        "@types/cors": "^2.8.17",
+        "@types/express": "^5.0.3",
+        "@types/node": "^22.13.10",
+        "@types/pg": "^8.11.11",
+        "eslint": "^9.22.0",
+        "tsx": "^4.19.3",
+        "pino-pretty": "^13.0.0",
+        "typescript": "^5.8.2",
+        "vitest": "^3.0.8"
+    }
+}

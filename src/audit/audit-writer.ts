@@ -1,0 +1,140 @@
+import type { PoolClient } from 'pg';
+
+/**
+ * Append-only audit event writer (spec §21, cross-cutting `audit` layer).
+ *
+ * Every authentication event, permission check outcome, customer-data access,
+ * and financial mutation writes an audit event in the SAME database
+ * transaction as the mutation itself (financial integrity gate, spec §6.3).
+ *
+ * The audit_event table rejects UPDATE/DELETE at the database level.
+ */
+export type AuditSource = 'admin_web' | 'agent_mobile' | 'system';
+
+export const AUDIT_ACTIONS = {
+  // Authentication & identity
+  AUTH_LOGIN_SUCCESS: 'auth.login.success',
+  AUTH_LOGIN_FAILURE: 'auth.login.failure',
+  AUTH_LOCKED_OUT: 'auth.login.locked_out',
+  AUTH_DEVICE_PENDING: 'auth.login.device_pending',
+  AUTH_LOGOUT: 'auth.logout',
+  AUTH_REFRESH_ROTATED: 'auth.refresh.rotated',
+  AUTH_REFRESH_REUSE_DETECTED: 'auth.refresh.reuse_detected',
+  AUTH_ACCOUNT_UNLOCKED: 'auth.account.unlocked',
+  AUTH_PASSWORD_CHANGED: 'auth.password.changed',
+  AUTH_DEVICE_REGISTERED: 'auth.device.registered',
+  AUTH_DEVICE_CONFIRMED: 'auth.device.confirmed',
+  AUTH_DEVICE_DISABLED: 'auth.device.disabled',
+  STAFF_CREATED: 'identity.staff.created',
+  STAFF_UPDATED: 'identity.staff.updated',
+  STAFF_DEACTIVATED: 'identity.staff.deactivated',
+  ROLE_PERMISSIONS_UPDATED: 'identity.role.permissions_updated',
+  // Customer data
+  CUSTOMER_CREATED: 'customers.customer.created',
+  CUSTOMER_UPDATED: 'customers.customer.updated',
+  CUSTOMER_STATUS_CHANGED: 'customers.customer.status_changed',
+  CUSTOMER_KYC_APPROVED: 'customers.kyc.approved',
+  CUSTOMER_DATA_ACCESSED: 'customers.data.accessed',
+  CUSTOMER_DOCUMENTS_ACCESSED: 'customers.documents.accessed',
+  CUSTOMER_MERGED: 'customers.customer.merged',
+  // Financial mutations
+  SAVINGS_ACCOUNT_OPENED: 'deposits.account.opened',
+  SAVINGS_ACCOUNT_FROZEN: 'deposits.account.frozen',
+  SAVINGS_ACCOUNT_CLOSED: 'deposits.account.closed',
+  SAVINGS_ACCOUNT_REOPENED: 'deposits.account.reopened',
+  SAVINGS_TRANSACTION_POSTED: 'deposits.transaction.posted',
+  SAVINGS_ADJUSTMENT_CREATED: 'deposits.adjustment.created',
+  RD_ACCOUNT_OPENED: 'rd.account.opened',
+  RD_INSTALMENT_PAID: 'rd.instalment.paid',
+  RD_PENALTY_WAIVED: 'rd.penalty.waived',
+  RD_RESCHEDULED: 'rd.account.rescheduled',
+  RD_CLOSED_EARLY: 'rd.account.closed_early',
+  FD_ACCOUNT_OPENED: 'fd.account.opened',
+  FD_LIEN_SET: 'fd.lien.set',
+  FD_LIEN_RELEASED: 'fd.lien.released',
+  FD_CLOSED_EARLY: 'fd.account.closed_early',
+  FD_MATURITY_ACTION: 'fd.account.maturity_action',
+  LOAN_APPLICATION_SUBMITTED: 'loans.application.submitted',
+  LOAN_APPLICATION_RECOMMENDED: 'loans.application.recommended',
+  LOAN_APPLICATION_APPROVED: 'loans.application.approved',
+  LOAN_DISBURSED: 'loans.loan.disbursed',
+  LOAN_REPAYMENT_RECORDED: 'loans.repayment.recorded',
+  LOAN_RESCHEDULED: 'loans.loan.rescheduled',
+  LOAN_SETTLED: 'loans.loan.settled',
+  LOAN_WRITTEN_OFF: 'loans.loan.written_off',
+  LOAN_WAIVED: 'loans.loan.waived',
+  LOAN_SURPLUS_RELEASED: 'loans.surplus.released',
+  WITHDRAWAL_REQUESTED: 'withdrawals.withdrawal.requested',
+  WITHDRAWAL_APPROVED: 'withdrawals.withdrawal.approved',
+  WITHDRAWAL_REJECTED: 'withdrawals.withdrawal.rejected',
+  WITHDRAWAL_PAID: 'withdrawals.withdrawal.paid',
+  WITHDRAWAL_CONFIRMED: 'withdrawals.withdrawal.confirmed',
+  WITHDRAWAL_CHANGED: 'withdrawals.withdrawal.changed',
+  COLLECTION_SUBMITTED: 'collections.collection.submitted',
+  COLLECTION_REVIEWED: 'collections.collection.reviewed',
+  COLLECTION_REVERSED: 'collections.collection.reversed',
+  COLLECTION_DUPLICATE_DELETED: 'collections.collection.duplicate_deleted',
+  COLLECTION_ALLOCATION_DECIDED: 'collections.collection.allocation_decided',
+  // Agents & reconciliation
+  AGENT_ONBOARDED: 'agents.agent.onboarded',
+  AGENT_STATUS_CHANGED: 'agents.agent.status_changed',
+  AGENT_ASSIGNMENT_CHANGED: 'agents.assignment.changed',
+  ROUTE_EXCHANGE_APPROVED: 'agents.route_exchange.approved',
+  DAY_CLOSE_SUBMITTED: 'reconciliation.day_close.submitted',
+  DAY_CLOSE_CLOSED: 'reconciliation.day_close.closed',
+  DAY_CLOSE_REOPENED: 'reconciliation.day_close.reopened',
+  DAY_CLOSE_LOCKED: 'reconciliation.day_close.locked',
+  CASH_HANDOVER_COUNTED: 'reconciliation.cash_handover.counted',
+  RECONCILIATION_DIFFERENCE_MARKED: 'reconciliation.difference.marked',
+  // Corrections, disputes, claims
+  ADJUSTMENT_CREATED: 'corrections.adjustment.created',
+  DISPUTE_RAISED: 'corrections.dispute.raised',
+  DISPUTE_RESOLVED: 'corrections.dispute.resolved',
+  CLAIM_DECIDED: 'corrections.claim.decided',
+  // Reports, settings, sync
+  REPORT_GENERATED: 'reports.report.generated',
+  REPORT_DOWNLOADED: 'reports.report.downloaded',
+  REPORT_SHARED: 'reports.report.shared',
+  SETTING_CHANGED: 'settings.setting.changed',
+  SYNC_CONFLICT_ESCALATED: 'sync.conflict.escalated',
+} as const;
+
+export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
+
+export interface AuditEventInput {
+  actorStaffId?: string | null;
+  actorRole?: string | null;
+  actorStaffCode?: string | null;
+  action: string;
+  entityType: string;
+  entityId?: string | null;
+  source: AuditSource;
+  requestId?: string | null;
+  businessDate?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Appends an audit event using the given transaction client so the audit
+ * record commits atomically with the mutation it describes.
+ */
+export async function appendAuditEvent(client: PoolClient, event: AuditEventInput): Promise<void> {
+  await client.query(
+    `INSERT INTO audit_event
+       (actor_staff_id, actor_role, actor_staff_code, action, entity_type, entity_id,
+        source, request_id, business_date, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      event.actorStaffId ?? null,
+      event.actorRole ?? null,
+      event.actorStaffCode ?? null,
+      event.action,
+      event.entityType,
+      event.entityId ?? null,
+      event.source,
+      event.requestId ?? null,
+      event.businessDate ?? null,
+      JSON.stringify(event.metadata ?? {}),
+    ],
+  );
+}
