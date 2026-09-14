@@ -2,8 +2,8 @@ import { Router } from 'express';
 import { authenticate, requirePermission, requireRole, requireSource } from '../../middleware/auth.js';
 import { parse, validateBody } from '../../middleware/validate.js';
 import { UnauthorizedError } from '../../core/errors.js';
-import { allocateShortPayment, approveEmergencyCollection, deleteDuplicateCollection, getCollectionStatus, getCollectionTotals, listCollections, recordVisit, reviewCollection, reverseCollection, submitCollection, } from './collections.service.js';
-import { allocateCollectionSchema, collectionTotalsQuerySchema, deleteDuplicateSchema, emergencyApprovalSchema, idempotencyKeySchema, idParamSchema, listCollectionsQuerySchema, reviewCollectionSchema, reverseCollectionSchema, submitCollectionSchema, visitSchema, } from './collections.schemas.js';
+import { allocateShortPayment, approveEmergencyCollection, deleteDuplicateCollection, getCollectionStatus, getCollectionTotals, listCollections, listVisits, recordVisit, reviewCollection, reverseCollection, submitCollection, } from './collections.service.js';
+import { allocateCollectionSchema, collectionTotalsQuerySchema, deleteDuplicateSchema, emergencyApprovalSchema, idempotencyKeySchema, idParamSchema, listCollectionsQuerySchema, listVisitsQuerySchema, reviewCollectionSchema, reverseCollectionSchema, submitCollectionSchema, visitSchema, } from './collections.schemas.js';
 /**
  * Doorstep collections HTTP surface (docs/backend-master-spec.md §14).
  *
@@ -100,6 +100,12 @@ collectionsRouter.post('/visits', authenticate, requireRole('collection_agent'),
 collectionsRouter.get('/', authenticate, requirePermission('collections.read'), async (request, response) => {
     const query = parse(listCollectionsQuerySchema, request.query);
     const result = await listCollections(query);
+    response.status(200).json(result);
+});
+// GET /api/v1/collections/visits — office visit list with filters.
+collectionsRouter.get('/visits', authenticate, requirePermission('collections.read'), async (request, response) => {
+    const query = parse(listVisitsQuerySchema, request.query);
+    const result = await listVisits(query);
     response.status(200).json(result);
 });
 // GET /api/v1/collections/reports/collection-totals — total-amount collection

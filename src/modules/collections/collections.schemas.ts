@@ -52,8 +52,8 @@ const dateOnlySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in 
 const isoDateTimeSchema = z
   .string()
   .regex(
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})?$/,
-    'Timestamp must be an ISO-8601 instant (YYYY-MM-DDThh:mm:ss[.sss][Z|±hh:mm])',
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})?$/,
+    'Timestamp must be an ISO-8601 instant (YYYY-MM-DDThh:mm:ss[.ssssss][Z|±hh:mm])',
   )
   .refine((value) => !Number.isNaN(Date.parse(value)), 'Timestamp must be a valid date-time');
 
@@ -203,6 +203,20 @@ export const listCollectionsQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 export type ListCollectionsQuery = z.infer<typeof listCollectionsQuerySchema>;
+
+/** Office visit list query — GET /api/v1/collections/visits */
+export const listVisitsQuerySchema = z.object({
+  agentId: uuidSchema.optional(),
+  customerId: uuidSchema.optional(),
+  outcome: visitOutcomeSchema.optional(),
+  /** visit_date range, inclusive (YYYY-MM-DD). */
+  dateFrom: dateOnlySchema.optional(),
+  dateTo: dateOnlySchema.optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type ListVisitsQuery = z.infer<typeof listVisitsQuerySchema>;
+
 
 /** M.D. review of a submitted collection — POST /:id/review. */
 export const reviewCollectionSchema = z.object({

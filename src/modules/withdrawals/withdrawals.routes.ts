@@ -14,6 +14,8 @@ import {
   confirmWithdrawal,
   changeWithdrawal,
   getWithdrawalHistory,
+  cancelWithdrawal,
+  reverseWithdrawal,
 } from './withdrawals.service.js';
 import type { RequestMeta } from './withdrawals.service.js';
 import {
@@ -24,6 +26,9 @@ import {
   payWithdrawalSchema,
   confirmWithdrawalSchema,
   changeWithdrawalSchema,
+  cancelWithdrawalSchema,
+  reverseWithdrawalSchema,
+  idempotencyKeySchema,
   idParamSchema,
 } from './withdrawals.schemas.js';
 import type {
@@ -34,6 +39,8 @@ import type {
   PayWithdrawalInput,
   ConfirmWithdrawalInput,
   ChangeWithdrawalInput,
+  CancelWithdrawalInput,
+  ReverseWithdrawalInput,
 } from './withdrawals.schemas.js';
 
 /**
@@ -46,6 +53,7 @@ import type {
  *    (requests above ₹2,00,000 additionally require the President — enforced
  *    in the service via canApproveWithdrawal)
  *  - change an approved request                  -> President only
+ *  - reverse a paid/confirmed payout             -> Managing Director only
  */
 
 /**
@@ -74,6 +82,20 @@ function idParam(request: Request): string {
   return parse(idParamSchema, request.params).id;
 }
 
+/**
+ * Reads and validates the client-generated `Idempotency-Key` header. The key is
+ * mandatory on POST /withdrawals so a retried submit (double-click, flaky
+ * network) can never create a duplicate money movement — the service replays the
+ * original result instead (spec §1.3, mirrors the sync protocol contract).
+ */
+function idempotencyKey(request: Request): string {
+  return parse(
+    idempotencyKeySchema,
+    request.get('Idempotency-Key'),
+    'Idempotency-Key header is required and must be a 32-character lowercase hexadecimal key',
+  );
+}
+
 export const withdrawalsRouter = Router();
 
 // ---------------------------------------------------------------------------
@@ -99,12 +121,13 @@ withdrawalsRouter.get('/:id', authenticate, requirePermission('withdrawals.read'
 
 // POST /api/v1/withdrawals — create a withdrawal request against a savings,
 // RD, FD or loan-surplus source (spec §13.1). The request starts 'pending' and
-// must be approved before payout.
+// must be approved before payout. Idempotent: a replayed Idempotency-Key returns
+// the original request (200) instead of creating a duplicate (201).
 withdrawalsRouter.post('/', authenticate, requirePermission('withdrawals.create'), validateBody(requestWithdrawalSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as RequestWithdrawalInput;
-  const withdrawal = await requestWithdrawal(actor, input, requestMeta(request));
-  response.status(201).json(withdrawal);
+  const result = await requestWithdrawal(actor, input, requestMeta(request), idempotencyKey(request));
+  response.status(result.created ? 201 : 200).json(result);
 });
 
 // POST /api/v1/withdrawals/:id/approve — approve a pending request. Requests
@@ -152,6 +175,41 @@ withdrawalsRouter.post('/:id/change', authenticate, requireRole('president'), va
   const withdrawal = await changeWithdrawal(actor, idParam(request), input, requestMeta(request));
   response.status(200).json(withdrawal);
 });
+
+// POST /api/v1/withdrawals/:id/cancel — cancel a pending or approved request
+// before payout (spec §13.1). A paid/confirmed payout can never be cancelled —
+// it must be reversed through the ledger. Cancellation is recorded as an event
+// and an audit entry so the trail is never rewritten.
+withdrawalsRouter.post(
+  '/:id/cancel',
+  authenticate,
+  requirePermission('withdrawals.approve'),
+  validateBody(cancelWithdrawalSchema),
+  async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body as CancelWithdrawalInput;
+    const withdrawal = await cancelWithdrawal(actor, idParam(request), input, requestMeta(request));
+    response.status(200).json(withdrawal);
+  },
+);
+
+// POST /api/v1/withdrawals/:id/reverse — recall a PAID/CONFIRMED payout. Unlike
+// cancel, the money has already left the bank, so a compensating credit is
+// posted back into the source savings account (the original debit stays
+// immutable) and the request moves to the terminal 'reversed' state. Reserved to
+// the Managing Director.
+withdrawalsRouter.post(
+  '/:id/reverse',
+  authenticate,
+  requireRole('managing_director'),
+  validateBody(reverseWithdrawalSchema),
+  async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body as ReverseWithdrawalInput;
+    const withdrawal = await reverseWithdrawal(actor, idParam(request), input, requestMeta(request));
+    response.status(200).json(withdrawal);
+  },
+);
 
 // GET /api/v1/withdrawals/:id/history — chronological event trail for a
 // withdrawal request (requested -> approved/rejected -> paid -> confirmed).

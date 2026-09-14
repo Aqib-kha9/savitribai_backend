@@ -29,6 +29,7 @@ import type {
   DeleteDuplicateInput,
   EmergencyApprovalInput,
   ListCollectionsQuery,
+  ListVisitsQuery,
   ReceiptKind,
   ReviewCollectionInput,
   ReverseCollectionInput,
@@ -134,6 +135,8 @@ export interface SubmissionResultView {
 export interface VisitView {
   id: string;
   idempotencyKey: string;
+  agentId: string;
+  agentName: string;
   customerId: string;
   customerName: string;
   visitDate: string;
@@ -142,6 +145,11 @@ export interface VisitView {
   remark: string | null;
   photos: string[] | null;
   createdAt: string;
+}
+
+export interface ListVisitsResult {
+  total: number;
+  items: VisitView[];
 }
 
 export interface VisitResultView {
@@ -437,6 +445,69 @@ async function loadSubmissionReplay(agentId: string, replay: SubmissionReplay): 
   return toSubmissionView(row);
 }
 
+export async function listVisits(queryInput: ListVisitsQuery): Promise<ListVisitsResult> {
+  const params: unknown[] = [];
+  const filters: string[] = [];
+
+  if (queryInput.agentId) {
+    params.push(queryInput.agentId);
+    filters.push(`v.agent_id = $${params.length}`);
+  }
+  if (queryInput.customerId) {
+    params.push(queryInput.customerId);
+    filters.push(`v.customer_id = $${params.length}`);
+  }
+  if (queryInput.outcome) {
+    params.push(queryInput.outcome);
+    filters.push(`v.outcome = $${params.length}`);
+  }
+  if (queryInput.dateFrom) {
+    params.push(queryInput.dateFrom);
+    filters.push(`v.visit_date >= $${params.length}`);
+  }
+  if (queryInput.dateTo) {
+    params.push(queryInput.dateTo);
+    filters.push(`v.visit_date <= $${params.length}`);
+  }
+
+  const whereClause = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+
+  const countParams = [...params];
+
+  params.push(queryInput.limit);
+  const limitParam = `$${params.length}`;
+  params.push(queryInput.offset);
+  const offsetParam = `$${params.length}`;
+
+  const countResult = await query<{ total: string }>(
+    `SELECT COUNT(*) as total FROM visit_log v ${whereClause}`,
+    countParams,
+  );
+  const total = parseInt(countResult.rows[0]?.total ?? '0', 10);
+
+  const result = await query<VisitSelectRow>(
+    `
+      SELECT 
+        v.id, v.idempotency_key, v.agent_id, s.full_name as agent_name,
+        v.customer_id, c.full_name as customer_name,
+        v.visit_date, v.visited_at, v.outcome, v.remark, v.photos, v.created_at
+      FROM visit_log v
+      JOIN customer c ON c.id = v.customer_id
+      JOIN agent a ON a.id = v.agent_id
+      JOIN staff s ON s.id = a.staff_id
+      ${whereClause}
+      ORDER BY v.visit_date DESC, v.created_at DESC
+      LIMIT ${limitParam} OFFSET ${offsetParam}
+    `,
+    params,
+  );
+
+  return {
+    total,
+    items: result.rows.map(toVisitView),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Visit read model
 // ---------------------------------------------------------------------------
@@ -444,14 +515,17 @@ async function loadSubmissionReplay(agentId: string, replay: SubmissionReplay): 
 type VisitSelectRow = {
   id: string;
   idempotency_key: string;
+  agent_id: string;
+  agent_name: string | null;
   customer_id: string;
-  customer_name: string;
+  customer_name: string | null;
   visit_date: string;
   visited_at: Date | null;
   outcome: VisitOutcome;
   remark: string | null;
   photos: unknown;
   created_at: Date;
+  total?: number;
 };
 
 function toVisitView(row: VisitSelectRow): VisitView {
@@ -459,8 +533,10 @@ function toVisitView(row: VisitSelectRow): VisitView {
   return {
     id: row.id,
     idempotencyKey: row.idempotency_key,
+    agentId: row.agent_id,
+    agentName: row.agent_name ?? 'Unknown Agent',
     customerId: row.customer_id,
-    customerName: row.customer_name,
+    customerName: row.customer_name ?? 'Unknown Customer',
     visitDate: row.visit_date,
     visitedAt: iso(row.visited_at),
     outcome: row.outcome,
@@ -482,10 +558,13 @@ async function selectVisitById(
     scopeSql = ' AND v.agent_id = $2';
   }
   const result = await client.query<VisitSelectRow>(
-    `SELECT v.id, v.idempotency_key, v.customer_id, c.full_name AS customer_name,
+    `SELECT v.id, v.idempotency_key, v.agent_id, s.full_name AS agent_name,
+            v.customer_id, c.full_name AS customer_name,
             v.visit_date, v.visited_at, v.outcome, v.remark, v.photos, v.created_at
        FROM visit_log v
        JOIN customer c ON c.id = v.customer_id
+       JOIN agent a ON a.id = v.agent_id
+       JOIN staff s ON s.id = a.staff_id
       WHERE v.id = $1${scopeSql}`,
     params,
   );

@@ -20,6 +20,11 @@ export const BUSINESS_RULES = {
     DISPUTE_WINDOW_MONTHS: 3,
     MIN_INTEREST_RATE: 4, // flexible 4%–25%+ per product
     MAX_INTEREST_RATE: 25,
+    // Withdrawal guard rails (§13). An absolute ceiling per single request plus a
+    // per-customer daily aggregate that counts every non-rejected/non-cancelled
+    // request for the same business date.
+    WITHDRAWAL_MAX_AMOUNT: '5000000.00', // ₹50,00,000 absolute cap per request
+    WITHDRAWAL_DAILY_LIMIT_PER_CUSTOMER: '500000.00', // ₹5,00,000 per customer per business date
 };
 const MONEY_PATTERN = /^\d{1,12}(\.\d{1,2})?$/;
 export function isValidMoney(value) {

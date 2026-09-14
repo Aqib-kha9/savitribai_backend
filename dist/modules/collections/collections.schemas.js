@@ -41,7 +41,7 @@ const dateOnlySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in 
  */
 const isoDateTimeSchema = z
     .string()
-    .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})?$/, 'Timestamp must be an ISO-8601 instant (YYYY-MM-DDThh:mm:ss[.sss][Z|±hh:mm])')
+    .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})?$/, 'Timestamp must be an ISO-8601 instant (YYYY-MM-DDThh:mm:ss[.ssssss][Z|±hh:mm])')
     .refine((value) => !Number.isNaN(Date.parse(value)), 'Timestamp must be a valid date-time');
 /** Money amount — /^\d{1,12}(\.\d{1,2})?$/ travels as a string (spec §1.3). */
 const amountSchema = z
@@ -172,6 +172,17 @@ export const listCollectionsQuerySchema = z.object({
     dateFrom: dateOnlySchema.optional(),
     dateTo: dateOnlySchema.optional(),
     isDeleted: z.enum(['true', 'false']).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+    offset: z.coerce.number().int().min(0).default(0),
+});
+/** Office visit list query — GET /api/v1/collections/visits */
+export const listVisitsQuerySchema = z.object({
+    agentId: uuidSchema.optional(),
+    customerId: uuidSchema.optional(),
+    outcome: visitOutcomeSchema.optional(),
+    /** visit_date range, inclusive (YYYY-MM-DD). */
+    dateFrom: dateOnlySchema.optional(),
+    dateTo: dateOnlySchema.optional(),
     limit: z.coerce.number().int().min(1).max(200).default(50),
     offset: z.coerce.number().int().min(0).default(0),
 });

@@ -193,13 +193,64 @@ async function loadSubmissionReplay(agentId, replay) {
     }
     return toSubmissionView(row);
 }
+export async function listVisits(queryInput) {
+    const params = [];
+    const filters = [];
+    if (queryInput.agentId) {
+        params.push(queryInput.agentId);
+        filters.push(`v.agent_id = $${params.length}`);
+    }
+    if (queryInput.customerId) {
+        params.push(queryInput.customerId);
+        filters.push(`v.customer_id = $${params.length}`);
+    }
+    if (queryInput.outcome) {
+        params.push(queryInput.outcome);
+        filters.push(`v.outcome = $${params.length}`);
+    }
+    if (queryInput.dateFrom) {
+        params.push(queryInput.dateFrom);
+        filters.push(`v.visit_date >= $${params.length}`);
+    }
+    if (queryInput.dateTo) {
+        params.push(queryInput.dateTo);
+        filters.push(`v.visit_date <= $${params.length}`);
+    }
+    const whereClause = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+    const countParams = [...params];
+    params.push(queryInput.limit);
+    const limitParam = `$${params.length}`;
+    params.push(queryInput.offset);
+    const offsetParam = `$${params.length}`;
+    const countResult = await query(`SELECT COUNT(*) as total FROM visit_log v ${whereClause}`, countParams);
+    const total = parseInt(countResult.rows[0]?.total ?? '0', 10);
+    const result = await query(`
+      SELECT 
+        v.id, v.idempotency_key, v.agent_id, s.full_name as agent_name,
+        v.customer_id, c.full_name as customer_name,
+        v.visit_date, v.visited_at, v.outcome, v.remark, v.photos, v.created_at
+      FROM visit_log v
+      JOIN customer c ON c.id = v.customer_id
+      JOIN agent a ON a.id = v.agent_id
+      JOIN staff s ON s.id = a.staff_id
+      ${whereClause}
+      ORDER BY v.visit_date DESC, v.created_at DESC
+      LIMIT ${limitParam} OFFSET ${offsetParam}
+    `, params);
+    return {
+        total,
+        items: result.rows.map(toVisitView),
+    };
+}
 function toVisitView(row) {
     const photos = Array.isArray(row.photos) ? row.photos : null;
     return {
         id: row.id,
         idempotencyKey: row.idempotency_key,
+        agentId: row.agent_id,
+        agentName: row.agent_name ?? 'Unknown Agent',
         customerId: row.customer_id,
-        customerName: row.customer_name,
+        customerName: row.customer_name ?? 'Unknown Customer',
         visitDate: row.visit_date,
         visitedAt: iso(row.visited_at),
         outcome: row.outcome,
@@ -215,10 +266,13 @@ async function selectVisitById(client, id, agentId) {
         params.push(agentId);
         scopeSql = ' AND v.agent_id = $2';
     }
-    const result = await client.query(`SELECT v.id, v.idempotency_key, v.customer_id, c.full_name AS customer_name,
+    const result = await client.query(`SELECT v.id, v.idempotency_key, v.agent_id, s.full_name AS agent_name,
+            v.customer_id, c.full_name AS customer_name,
             v.visit_date, v.visited_at, v.outcome, v.remark, v.photos, v.created_at
        FROM visit_log v
        JOIN customer c ON c.id = v.customer_id
+       JOIN agent a ON a.id = v.agent_id
+       JOIN staff s ON s.id = a.staff_id
       WHERE v.id = $1${scopeSql}`, params);
     return result.rows[0] ?? null;
 }

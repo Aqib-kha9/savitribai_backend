@@ -11,6 +11,7 @@ import {
   getCollectionStatus,
   getCollectionTotals,
   listCollections,
+  listVisits,
   recordVisit,
   reviewCollection,
   reverseCollection,
@@ -25,6 +26,7 @@ import {
   idempotencyKeySchema,
   idParamSchema,
   listCollectionsQuerySchema,
+  listVisitsQuerySchema,
   reviewCollectionSchema,
   reverseCollectionSchema,
   submitCollectionSchema,
@@ -36,6 +38,7 @@ import type {
   DeleteDuplicateInput,
   EmergencyApprovalInput,
   ListCollectionsQuery,
+  ListVisitsQuery,
   ReviewCollectionInput,
   ReverseCollectionInput,
   SubmitCollectionInput,
@@ -169,6 +172,13 @@ collectionsRouter.post(
 collectionsRouter.get('/', authenticate, requirePermission('collections.read'), async (request, response) => {
   const query = parse(listCollectionsQuerySchema, request.query) as ListCollectionsQuery;
   const result = await listCollections(query);
+  response.status(200).json(result);
+});
+
+// GET /api/v1/collections/visits — office visit list with filters.
+collectionsRouter.get('/visits', authenticate, requirePermission('collections.read'), async (request, response) => {
+  const query = parse(listVisitsQuerySchema, request.query) as ListVisitsQuery;
+  const result = await listVisits(query);
   response.status(200).json(result);
 });
 

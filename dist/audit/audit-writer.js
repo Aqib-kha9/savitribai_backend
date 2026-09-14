@@ -57,6 +57,8 @@ export const AUDIT_ACTIONS = {
     WITHDRAWAL_PAID: 'withdrawals.withdrawal.paid',
     WITHDRAWAL_CONFIRMED: 'withdrawals.withdrawal.confirmed',
     WITHDRAWAL_CHANGED: 'withdrawals.withdrawal.changed',
+    WITHDRAWAL_CANCELLED: 'withdrawals.withdrawal.cancelled',
+    WITHDRAWAL_REVERSED: 'withdrawals.withdrawal.reversed',
     COLLECTION_SUBMITTED: 'collections.collection.submitted',
     COLLECTION_REVIEWED: 'collections.collection.reviewed',
     COLLECTION_REVERSED: 'collections.collection.reversed',

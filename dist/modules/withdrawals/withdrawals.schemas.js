@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { idempotencyKeySchema } from '../sync/sync.schemas.js';
 /**
  * Withdrawals request schemas (docs/backend-master-spec.md §13).
  *
@@ -8,8 +9,8 @@ import { z } from 'zod';
  * vocabulary before it ever reaches SQL:
  *  - account_kind:    savings | rd | fd | loan_surplus
  *  - payment_method:  cash | bank_transfer | cheque | mobile_money
- *  - status:          pending | approved | rejected | paid | confirmed | cancelled
- *  - event_type:      requested | approved | rejected | paid | confirmed | changed | cancelled
+ *  - status:          pending | approved | rejected | paid | confirmed | cancelled | reversed
+ *  - event_type:      requested | approved | rejected | paid | confirmed | changed | cancelled | reversed
  *
  * Business rules surfaced here (spec §13.1 / §13.4):
  *  - minimum balance after withdrawal is ₹100 (MIN_BALANCE_AFTER_WITHDRAWAL);
@@ -30,7 +31,7 @@ export const accountKindSchema = z.enum(['savings', 'rd', 'fd', 'loan_surplus'])
 /** Payout method — withdrawal_request.payment_method CHECK (exactly these four). */
 export const paymentMethodSchema = z.enum(['cash', 'bank_transfer', 'cheque', 'mobile_money']);
 /** Withdrawal lifecycle — withdrawal_request.status CHECK. */
-export const withdrawalStatusSchema = z.enum(['pending', 'approved', 'rejected', 'paid', 'confirmed', 'cancelled']);
+export const withdrawalStatusSchema = z.enum(['pending', 'approved', 'rejected', 'paid', 'confirmed', 'cancelled', 'reversed']);
 /** History event kinds appended to withdrawal_event per state change. */
 export const withdrawalEventTypeSchema = z.enum([
     'requested',
@@ -40,6 +41,7 @@ export const withdrawalEventTypeSchema = z.enum([
     'confirmed',
     'changed',
     'cancelled',
+    'reversed',
 ]);
 /**
  * Identity checks performed before payout (spec §13.1). Flags are stored on
@@ -94,5 +96,29 @@ export const changeWithdrawalSchema = z.object({
     reason: z.string().trim().min(1).max(200),
     freeTextReason: z.string().trim().max(1000).optional(),
 });
+/**
+ * Cancel a withdrawal before payout. Only a pending or approved request may be
+ * cancelled; a paid/confirmed payout must be reversed through the ledger, never
+ * silently cancelled (enforced in the service).
+ */
+export const cancelWithdrawalSchema = z.object({
+    reason: z.string().trim().min(1).max(1000),
+});
+/**
+ * Reverse a PAID or CONFIRMED payout. Because the funds have already left the
+ * bank, the reversal posts a compensating credit back into the source account
+ * (the original debit is never modified) and records the mandatory reason.
+ * Reserved to the Managing Director (enforced in the service).
+ */
+export const reverseWithdrawalSchema = z.object({
+    reason: z.string().trim().min(1).max(1000),
+});
 /** Path parameter schema shared by /:id routes. */
 export const idParamSchema = z.object({ id: uuidSchema });
+/**
+ * Client-generated idempotency key for POST /withdrawals. The key is mandatory
+ * (enforced at the route) so a repeated submit can never create a duplicate
+ * money movement; it reuses the shared 32-char lowercase hex contract from the
+ * sync protocol.
+ */
+export { idempotencyKeySchema };
