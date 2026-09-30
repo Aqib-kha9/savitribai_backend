@@ -184,13 +184,13 @@ function audit(
   return appendAuditEvent(client, event);
 }
 
-function actorAuditBase(actor: AuthContext) {
+function actorAuditBase(actor: AuthContext, meta?: RequestMeta) {
   return {
     actorStaffId: actor.staffId,
     actorRole: actor.role,
     actorStaffCode: actor.staffCode,
     source: actor.source as AuditEventInput['source'],
-    requestId: null as string | null,
+    requestId: meta?.requestId ?? null,
   };
 }
 
@@ -265,6 +265,7 @@ interface BuilderParams {
 interface BuilderOutput {
   columns: string[];
   rows: ReportRow[];
+  hasTotalsRow?: boolean;
   /** Extra human context lines printed under the standard subtitle. */
   subtitle?: string[];
 }
@@ -341,7 +342,7 @@ function stampToDisplay(value: Date | string | null | undefined): string {
   if (!value) return '';
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  return date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '');
+  return istDateTimeString(date);
 }
 
 // --- daily_collection_register ---------------------------------------------
@@ -349,8 +350,8 @@ function stampToDisplay(value: Date | string | null | undefined): string {
 const builderDailyCollectionRegister: ReportBuilder = async (params) => {
   const range = rangeFor(params);
   const where = buildWhere([
-    { sql: 'ce.is_deleted = false', value: 'true' },
-    { sql: "ce.status = 'accepted'", value: 'true' },
+    { sql: 'ce.is_deleted = ?', value: false },
+    { sql: 'ce.status = ?', value: 'accepted' },
     { sql: 'ce.business_date >= ?::date', value: range.from },
     { sql: 'ce.business_date <= ?::date', value: range.to },
     { sql: 'ce.agent_id = ?', value: str(params.filters.agent_id) || null },
@@ -476,6 +477,11 @@ const builderCustomerStatement: ReportBuilder = async (params) => {
   const range = rangeFor(params);
   const customerId = str(params.filters.customer_id);
   const accountId = str(params.filters.account_id);
+
+  if (!customerId && !accountId) {
+    throw new BadRequestError('A Customer ID or Account ID is strictly required to generate a customer statement.', 'STATEMENT_MISSING_CUSTOMER');
+  }
+
   const where = buildWhere([
     { sql: 'at.value_date >= ?::date', value: range.from },
     { sql: 'at.value_date <= ?::date', value: range.to },
@@ -516,17 +522,34 @@ const builderCustomerStatement: ReportBuilder = async (params) => {
     description: string;
   }>(sql, where.params);
 
+  let sumDebit = 0;
+  let sumCredit = 0;
   const rows = result.rows.map((r): ReportRow => {
     const dr = r.direction === 'debit' ? r.amount : '';
     const cr = r.direction === 'credit' ? r.amount : '';
+    if (r.direction === 'debit') sumDebit += Number(r.amount) || 0;
+    if (r.direction === 'credit') sumCredit += Number(r.amount) || 0;
     const note =
       r.description ||
       `${r.transaction_type}${r.reference_number ? ` (${r.reference_number})` : ''}`;
     return [r.value_date, r.account_number, note, dr, cr, r.balance_after];
   });
+
+  if (rows.length > 0) {
+    rows.push([
+      '',
+      '',
+      'GRAND TOTAL',
+      sumDebit.toFixed(2),
+      sumCredit.toFixed(2),
+      '',
+    ]);
+  }
+
   return {
     columns: ['Date', 'Account No', 'Particulars', 'Debit', 'Credit', 'Balance'],
     rows,
+    hasTotalsRow: rows.length > 0,
   };
 };
 
@@ -588,9 +611,32 @@ const builderLoanOutstandingReport: ReportBuilder = async (params) => {
       r.next_due_date,
     ],
   );
+
+  if (rows.length > 0) {
+    let sumDisbursed = 0, sumRepaid = 0, sumOutstanding = 0;
+    for (const r of result.rows) {
+      sumDisbursed += Number(r.disbursed_amount) || 0;
+      sumRepaid += Number(r.total_paid) || 0;
+      sumOutstanding += Number(r.outstanding_amount) || 0;
+    }
+    rows.push([
+      '',
+      'GRAND TOTAL',
+      '',
+      '',
+      '',
+      sumDisbursed.toFixed(2),
+      sumRepaid.toFixed(2),
+      sumOutstanding.toFixed(2),
+      '',
+      '',
+    ]);
+  }
+
   return {
     columns: ['Loan No', 'Customer', 'Product', 'Branch', 'Disbursed On', 'Disbursed', 'Repaid', 'Outstanding', 'Status', 'Next Due'],
     rows,
+    hasTotalsRow: rows.length > 0,
     subtitle: [`Outstanding position as on ${formatDDMMYYYY(asOf(params))}`],
   };
 };
@@ -660,9 +706,31 @@ const builderWeeklyLoanCollectionRegister: ReportBuilder = async (params) => {
       r.status,
     ],
   );
+
+  if (rows.length > 0) {
+    let sumExpected = 0, sumCollected = 0;
+    for (const r of result.rows) {
+      sumExpected += Number(r.expected_amount) || 0;
+      sumCollected += Number(r.paid_amount) || 0;
+    }
+    rows.push([
+      '',
+      'GRAND TOTAL',
+      '',
+      '',
+      '',
+      '',
+      '',
+      sumExpected.toFixed(2),
+      sumCollected.toFixed(2),
+      '',
+    ]);
+  }
+
   return {
     columns: ['Due Date', 'Loan No', 'Customer', 'Customer No', 'Product', 'Branch', 'Instalment', 'Expected', 'Collected', 'Status'],
     rows,
+    hasTotalsRow: rows.length > 0,
     subtitle: [`Weekly loan collection register for ${formatDDMMYYYY(range.from)} to ${formatDDMMYYYY(range.to)}`],
   };
 };
@@ -744,9 +812,41 @@ const builderOverdueLoanReport: ReportBuilder = async (params) => {
       bucket.label,
     ]);
   }
+
+  if (rows.length > 0) {
+    let sumExpected = 0, sumPrincipal = 0, sumInterest = 0, sumPenalty = 0, sumPaid = 0;
+    for (const r of result.rows) {
+      // Must recalculate bucket filtering condition since it filters result.rows
+      const days = daysBetween(r.due_date, today);
+      const bucket = overdueBucket(days);
+      if (bucketFilter && bucket.code !== bucketFilter) continue;
+      
+      sumExpected += Number(r.expected_amount) || 0;
+      sumPrincipal += Number(r.principal_component) || 0;
+      sumInterest += Number(r.interest_component) || 0;
+      sumPenalty += Number(r.penalty_component) || 0;
+      sumPaid += Number(r.paid_amount) || 0;
+    }
+    rows.push([
+      '',
+      'GRAND TOTAL',
+      '',
+      '',
+      '',
+      sumExpected.toFixed(2),
+      sumPrincipal.toFixed(2),
+      sumInterest.toFixed(2),
+      sumPenalty.toFixed(2),
+      sumPaid.toFixed(2),
+      '',
+      '',
+    ]);
+  }
+
   return {
     columns: ['Loan No', 'Customer', 'Product', 'Instalment', 'Due Date', 'Expected', 'Principal', 'Interest', 'Penalty', 'Paid', 'Days Overdue', 'Ageing'],
     rows,
+    hasTotalsRow: rows.length > 0,
     subtitle: [`Overdue position as on ${formatDDMMYYYY(today)}`],
   };
 };
@@ -811,9 +911,39 @@ const builderDayCloseSummary: ReportBuilder = async (params) => {
       String(r.unresolved),
     ],
   );
+
+  if (rows.length > 0) {
+    let sumDeclared = 0, sumCash = 0, sumDigital = 0, sumEntries = 0;
+    let sumHandoverD = 0, sumHandoverC = 0, sumSettlements = 0, sumUnresolved = 0;
+    for (const r of result.rows) {
+      sumDeclared += Number(r.total_amount) || 0;
+      sumCash += Number(r.cash_amount) || 0;
+      sumDigital += Number(r.digital_amount) || 0;
+      sumEntries += Number(r.entry_count) || 0;
+      sumHandoverD += Number(r.handover_declared) || 0;
+      sumHandoverC += Number(r.handover_confirmed) || 0;
+      sumSettlements += Number(r.settlements) || 0;
+      sumUnresolved += Number(r.unresolved) || 0;
+    }
+    rows.push([
+      '',
+      'GRAND TOTAL',
+      '',
+      sumDeclared.toFixed(2),
+      sumCash.toFixed(2),
+      sumDigital.toFixed(2),
+      String(sumEntries),
+      sumHandoverD.toFixed(2),
+      sumHandoverC.toFixed(2),
+      sumSettlements.toFixed(2),
+      String(sumUnresolved),
+    ]);
+  }
+
   return {
     columns: ['Business Date', 'Agent Code', 'Status', 'Declared Total', 'Cash', 'Digital', 'Entries', 'Handover Declared', 'Handover Confirmed', 'Settlements', 'Unresolved Diffs'],
     rows,
+    hasTotalsRow: rows.length > 0,
   };
 };
 
@@ -890,9 +1020,33 @@ const builderAgentPerformanceReport: ReportBuilder = async (params) => {
       r.assigned_customers,
     ],
   );
+
+  if (rows.length > 0) {
+    let sumAccepted = 0, sumEntries = 0, sumAmount = 0, sumVisits = 0, sumCollectedVisits = 0, sumAssigned = 0;
+    for (const r of result.rows) {
+      sumAccepted += Number(r.accepted_count) || 0;
+      sumEntries += Number(r.entry_count) || 0;
+      sumAmount += Number(r.accepted_amount) || 0;
+      sumVisits += Number(r.visit_count) || 0;
+      sumCollectedVisits += Number(r.collected_count) || 0;
+      sumAssigned += Number(r.assigned_customers) || 0;
+    }
+    rows.push([
+      '',
+      'GRAND TOTAL',
+      String(sumAccepted),
+      String(sumEntries),
+      sumAmount.toFixed(2),
+      String(sumVisits),
+      String(sumCollectedVisits),
+      String(sumAssigned),
+    ]);
+  }
+
   return {
     columns: ['Agent Code', 'Agent Name', 'Accepted Collections', 'Total Entries', 'Amount Collected', 'Visits', 'Collected Visits', 'Assigned Customers'],
     rows,
+    hasTotalsRow: rows.length > 0,
     subtitle: [`Period: ${formatDDMMYYYY(range.from)} to ${formatDDMMYYYY(range.to)}`],
   };
 };
@@ -903,6 +1057,8 @@ const builderInterestPostingRegister: ReportBuilder = async (params) => {
   const range = rangeFor(params);
   const productId = str(params.filters.product_id) || null;
   const accountId = str(params.filters.account_id) || null;
+
+  const customerId = str(params.filters.customer_id) || null;
 
   const sql = `
     SELECT * FROM (
@@ -922,6 +1078,7 @@ const builderInterestPostingRegister: ReportBuilder = async (params) => {
        WHERE ip.posting_date BETWEEN $1::date AND $2::date
          AND ($3::uuid IS NULL OR sa.product_id = $3::uuid)
          AND ($4::uuid IS NULL OR sa.id = $4::uuid)
+         AND ($5::uuid IS NULL OR sa.customer_id = $5::uuid)
       UNION ALL
       SELECT rip.posting_date::text,
              ra.account_number,
@@ -937,6 +1094,8 @@ const builderInterestPostingRegister: ReportBuilder = async (params) => {
         JOIN rd_scheme rs    ON rs.id = ra.scheme_id
         JOIN customer c      ON c.id = ra.customer_id
        WHERE rip.posting_date BETWEEN $1::date AND $2::date
+         AND ($4::uuid IS NULL OR ra.id = $4::uuid)
+         AND ($5::uuid IS NULL OR ra.customer_id = $5::uuid)
       UNION ALL
       SELECT fp.payout_date::text,
              fa.account_number,
@@ -951,6 +1110,8 @@ const builderInterestPostingRegister: ReportBuilder = async (params) => {
         JOIN fd_account fa ON fa.id = fp.fd_account_id
         JOIN customer c    ON c.id = fa.customer_id
        WHERE fp.payout_date BETWEEN $1::date AND $2::date
+         AND ($4::uuid IS NULL OR fa.id = $4::uuid)
+         AND ($5::uuid IS NULL OR fa.customer_id = $5::uuid)
     ) u
     ORDER BY u.posting_date ASC
     LIMIT ${MAX_REPORT_ROWS}`;
@@ -965,7 +1126,7 @@ const builderInterestPostingRegister: ReportBuilder = async (params) => {
     period_start: string;
     period_end: string;
     subledger: string;
-  }>(sql, [range.from, range.to, productId, accountId]);
+  }>(sql, [range.from, range.to, productId, accountId, customerId]);
 
   const rows = result.rows.map(
     (r): ReportRow => [
@@ -1035,6 +1196,7 @@ const builderDisputeRegister: ReportBuilder = async (params) => {
       r.customer_name,
       r.customer_number,
       r.disputed_entity_type,
+      r.disputed_entity_id,
       r.description,
       r.status,
       r.resolution,
@@ -1043,7 +1205,7 @@ const builderDisputeRegister: ReportBuilder = async (params) => {
     ],
   );
   return {
-    columns: ['Dispute No', 'Raised On', 'Customer', 'Customer No', 'Entity Type', 'Description', 'Status', 'Resolution', 'Resolved By', 'Resolved On'],
+    columns: ['Dispute No', 'Raised On', 'Customer', 'Customer No', 'Entity Type', 'Entity ID', 'Description', 'Status', 'Resolution', 'Resolved By', 'Resolved On'],
     rows,
   };
 };
@@ -1194,6 +1356,44 @@ const builderYearlyAuthorityReport: ReportBuilder = async (params) => {
       r.disputes_raised,
     ],
   );
+
+  if (rows.length > 0) {
+    let sNewCust = 0, sSavOpened = 0, sSavDep = 0, sWithPaid = 0, sIntPosted = 0;
+    let sRdOpened = 0, sFdOpened = 0, sLoansDisb = 0, sLoanAmt = 0;
+    let sLoanColl = 0, sTotalColl = 0, sDisputes = 0;
+
+    for (const r of result.rows) {
+      sNewCust += Number(r.new_customers) || 0;
+      sSavOpened += Number(r.savings_opened) || 0;
+      sSavDep += Number(r.savings_deposits) || 0;
+      sWithPaid += Number(r.withdrawals_paid) || 0;
+      sIntPosted += Number(r.interest_posted) || 0;
+      sRdOpened += Number(r.rd_opened) || 0;
+      sFdOpened += Number(r.fd_opened) || 0;
+      sLoansDisb += Number(r.loans_disbursed) || 0;
+      sLoanAmt += Number(r.loan_amount) || 0;
+      sLoanColl += Number(r.loan_collections) || 0;
+      sTotalColl += Number(r.total_collections) || 0;
+      sDisputes += Number(r.disputes_raised) || 0;
+    }
+
+    rows.push([
+      'GRAND TOTAL',
+      String(sNewCust),
+      String(sSavOpened),
+      sSavDep.toFixed(2),
+      sWithPaid.toFixed(2),
+      sIntPosted.toFixed(2),
+      String(sRdOpened),
+      String(sFdOpened),
+      String(sLoansDisb),
+      sLoanAmt.toFixed(2),
+      sLoanColl.toFixed(2),
+      sTotalColl.toFixed(2),
+      String(sDisputes),
+    ]);
+  }
+
   return {
     columns: [
       'Month',
@@ -1211,6 +1411,7 @@ const builderYearlyAuthorityReport: ReportBuilder = async (params) => {
       'Disputes Raised',
     ],
     rows,
+    hasTotalsRow: rows.length > 0,
   };
 };
 
@@ -1250,6 +1451,7 @@ interface PdfReportOptions {
   subtitleLines: string[];
   columns: string[];
   rows: ReportRow[];
+  hasTotalsRow?: boolean;
   generatedBy: string;
 }
 
@@ -1324,7 +1526,7 @@ async function renderPdfReport(options: PdfReportOptions): Promise<Uint8Array> {
 
   const rowHeights = cellLines.map((linesPerCell) => {
     const maxLines = Math.max(1, ...linesPerCell.map((lines) => lines.length));
-    return maxLines * LINE_HEIGHT_DATA + CELL_PAD_Y;
+    return Math.max(18, maxLines * LINE_HEIGHT_DATA + CELL_PAD_Y * 2);
   });
 
   // --- page packing (simulate so the "Page X of Y" footer is accurate) ----
@@ -1359,7 +1561,12 @@ async function renderPdfReport(options: PdfReportOptions): Promise<Uint8Array> {
   }
 
   const drawTableHead = (page: PDFPage, topY: number): number => {
-    const rowHeight = 18;
+    const headerLines = options.columns.map((header) =>
+      wrapText(bold, header, Math.max(columnWidth - 6, 10), FONT_SIZE_HEAD)
+    );
+    const maxLines = Math.max(1, ...headerLines.map((lines) => lines.length));
+    const rowHeight = Math.max(18, maxLines * LINE_HEIGHT_DATA + CELL_PAD_Y * 2);
+    
     const y = topY - rowHeight;
     page.drawRectangle({
       x: MARGIN_X,
@@ -1368,16 +1575,22 @@ async function renderPdfReport(options: PdfReportOptions): Promise<Uint8Array> {
       height: rowHeight,
       color: rgb(0.9, 0.92, 0.94),
     });
-    options.columns.forEach((header, colIndex) => {
+    
+    headerLines.forEach((lines, colIndex) => {
       const x = MARGIN_X + colIndex * columnWidth;
-      page.drawText(header, {
-        x: x + 3,
-        y: y + (rowHeight - FONT_SIZE_HEAD) / 2 + 1,
-        size: FONT_SIZE_HEAD,
-        font: bold,
-        color: black,
-      });
+      let textY = topY - CELL_PAD_Y - FONT_SIZE_HEAD;
+      for (const line of lines) {
+        page.drawText(line, {
+          x: x + 3,
+          y: textY,
+          size: FONT_SIZE_HEAD,
+          font: bold,
+          color: black,
+        });
+        textY -= LINE_HEIGHT_DATA;
+      }
     });
+    
     page.drawLine({
       start: { x: MARGIN_X, y },
       end: { x: PAGE_WIDTH - MARGIN_X, y },
@@ -1485,6 +1698,7 @@ async function renderPdfReport(options: PdfReportOptions): Promise<Uint8Array> {
     rowIndex: number,
     rowLines: string[][],
     height: number,
+    isTotal: boolean,
   ): void => {
     // bottom y of this row
     const bottomY = topY - height;
@@ -1494,9 +1708,9 @@ async function renderPdfReport(options: PdfReportOptions): Promise<Uint8Array> {
       const numeric = lines.length === 1 && isNumericText(lines[0] ?? '');
       const textX = numeric ? x + columnWidth - 3 - font.widthOfTextAtSize(lines[0] ?? '', FONT_SIZE_DATA) : x + 3;
       const blockHeight = lines.length * LINE_HEIGHT_DATA;
-      let textY = topY - CELL_PAD_Y - LINE_HEIGHT_DATA;
+      let textY = topY - CELL_PAD_Y - FONT_SIZE_DATA;
       for (const line of lines) {
-        page.drawText(line, { x: textX, y: textY, size: FONT_SIZE_DATA, font, color: black });
+        page.drawText(line, { x: textX, y: textY, size: FONT_SIZE_DATA, font: isTotal ? bold : font, color: black });
         textY -= LINE_HEIGHT_DATA;
       }
       void blockHeight;
@@ -1509,13 +1723,22 @@ async function renderPdfReport(options: PdfReportOptions): Promise<Uint8Array> {
       });
     });
 
-    // thin row rule
+    // thin row rule or thick for total
     page.drawLine({
       start: { x: MARGIN_X, y: bottomY },
       end: { x: PAGE_WIDTH - MARGIN_X, y: bottomY },
-      thickness: 0.2,
-      color: light,
+      thickness: isTotal ? 0.8 : 0.2,
+      color: isTotal ? black : light,
     });
+    
+    if (isTotal) {
+       page.drawLine({
+         start: { x: MARGIN_X, y: topY },
+         end: { x: PAGE_WIDTH - MARGIN_X, y: topY },
+         thickness: 0.8,
+         color: black,
+       });
+    }
     void rowIndex;
   };
 
@@ -1529,7 +1752,8 @@ async function renderPdfReport(options: PdfReportOptions): Promise<Uint8Array> {
     for (const rowIndex of rowsOnPage) {
       const lines = cellLines[rowIndex] ?? [];
       const height = rowHeights[rowIndex] ?? LINE_HEIGHT_DATA + CELL_PAD_Y;
-      drawDataRow(page, y, rowIndex, lines, height);
+      const isTotal = options.hasTotalsRow ? rowIndex === options.rows.length - 1 : false;
+      drawDataRow(page, y, rowIndex, lines, height, isTotal);
       y -= height;
     }
     drawFooter(page, pageIndex);
@@ -1643,6 +1867,7 @@ export async function generateReport(
       subtitleLines,
       columns: built.columns,
       rows: built.rows,
+      hasTotalsRow: built.hasTotalsRow ?? false,
       generatedBy: `${actor.fullName} (${actor.staffCode})`,
     });
   } catch (error) {
@@ -1683,7 +1908,7 @@ export async function generateReport(
     if (!row) throw new InternalError('Generated report insert returned no row');
 
     await audit(client, {
-      ...actorAuditBase(actor),
+      ...actorAuditBase(actor, meta),
       action: AUDIT_ACTIONS.REPORT_GENERATED,
       entityType: 'generated_report',
       entityId: row.id,
@@ -1760,7 +1985,7 @@ export async function downloadReport(
   // The download audit is a standalone autocommit write (spec §6.3 allows
   // read-side events to use their own client; no transaction is needed here).
   await audit(autocommitClient(), {
-    ...actorAuditBase(actor),
+    ...actorAuditBase(actor, meta),
     action: AUDIT_ACTIONS.REPORT_DOWNLOADED,
     entityType: 'generated_report',
     entityId: report.id,
@@ -1850,7 +2075,7 @@ export async function shareReport(
     );
 
     await audit(client, {
-      ...actorAuditBase(actor),
+      ...actorAuditBase(actor, meta),
       action: AUDIT_ACTIONS.REPORT_SHARED,
       entityType: 'generated_report',
       entityId: report.id,

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 export function requestId(request: Request, response: Response, next: NextFunction): void {
   const id = request.header('x-request-id') ?? randomUUID();
+  request.id = id;
   response.setHeader('x-request-id', id);
   next();
 }
