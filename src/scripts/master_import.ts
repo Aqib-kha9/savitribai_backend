@@ -41,7 +41,8 @@ async function run() {
        depositProductId = res.rows[0].id;
     }
 
-    const workbook = xlsx.readFile('e:\\cfdcms\\Savitribai fule -1.xls');
+    const filePath = process.argv[2] || 'data.xls';
+    const workbook = xlsx.readFile(filePath);
     let custCounter = 1;
 
     async function getOrCreateCustomer(name: string, mobileRaw: any) {
