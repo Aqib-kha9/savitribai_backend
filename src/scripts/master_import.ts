@@ -62,14 +62,16 @@ async function run() {
     const bizLoans = xlsx.utils.sheet_to_json<any>(workbook.Sheets['Business Loan Account']!);
     for (const row of bizLoans) {
       if (!row['Customer Name']) continue;
+      const amt = parseFloat(row['Loan Amount']);
+      if (!amt || isNaN(amt) || amt <= 0) continue;
       const cid = await getOrCreateCustomer(row['Customer Name'], row['Mobile Number']);
       const appRes = await client.query(
         "INSERT INTO loan_application (application_number, customer_id, product_id, purpose, requested_amount, approved_amount, tenure_months, repayment_frequency, status) VALUES ($1, $2, $3, 'Business', $4, $4, 12, 'monthly', 'disbursed') RETURNING id",
-        ['APP-BIZ-' + row['Account Number'], cid, loanProductId, row['Loan Amount'] || 0]
+        ['APP-BIZ-' + row['Account Number'], cid, loanProductId, amt]
       );
       await client.query(
         "INSERT INTO loan (loan_number, application_id, customer_id, product_id, branch_id, status, approved_amount, disbursed_amount, disbursed_on, tenure_months, repayment_frequency, interest_method, interest_rate, flat_interest_total, total_payable) VALUES ($1, $2, $3, $4, $5, 'active', $6, $6, $7, 12, 'monthly', 'flat', 12.00, 0, $6)",
-        ['LN-BIZ-' + row['Account Number'], appRes.rows[0].id, cid, loanProductId, branchId, row['Loan Amount'] || 0, excelDateToJSDate(row['Disbursement Date']) || '2026-09-01']
+        ['LN-BIZ-' + row['Account Number'], appRes.rows[0].id, cid, loanProductId, branchId, amt, excelDateToJSDate(row['Disbursement Date']) || '2026-09-01']
       );
     }
 
@@ -77,14 +79,16 @@ async function run() {
     const perLoans = xlsx.utils.sheet_to_json<any>(workbook.Sheets['Personl Loan']!);
     for (const row of perLoans) {
       if (!row['Customer Name']) continue;
+      const amt = parseFloat(row['Loan Amount']);
+      if (!amt || isNaN(amt) || amt <= 0) continue;
       const cid = await getOrCreateCustomer(row['Customer Name'], row['Mobile Number']);
       const appRes = await client.query(
         "INSERT INTO loan_application (application_number, customer_id, product_id, purpose, requested_amount, approved_amount, tenure_months, repayment_frequency, status) VALUES ($1, $2, $3, 'Personal', $4, $4, 12, 'monthly', 'disbursed') RETURNING id",
-        ['APP-PER-' + row['Account Number'], cid, loanProductId, row['Loan Amount'] || 0]
+        ['APP-PER-' + row['Account Number'], cid, loanProductId, amt]
       );
       await client.query(
         "INSERT INTO loan (loan_number, application_id, customer_id, product_id, branch_id, status, approved_amount, disbursed_amount, disbursed_on, tenure_months, repayment_frequency, interest_method, interest_rate, flat_interest_total, total_payable) VALUES ($1, $2, $3, $4, $5, 'active', $6, $6, $7, 12, 'monthly', 'flat', 12.00, 0, $6)",
-        ['LN-PER-' + row['Account Number'], appRes.rows[0].id, cid, loanProductId, branchId, row['Loan Amount'] || 0, excelDateToJSDate(row['Disbursement Date']) || '2026-09-01']
+        ['LN-PER-' + row['Account Number'], appRes.rows[0].id, cid, loanProductId, branchId, amt, excelDateToJSDate(row['Disbursement Date']) || '2026-09-01']
       );
     }
 
@@ -92,14 +96,16 @@ async function run() {
     const loanColls = xlsx.utils.sheet_to_json<any>(workbook.Sheets['Loan Collection']!);
     for (const row of loanColls) {
       if (!row['Customer Name']) continue;
+      const amt = parseFloat(row['Loan Amount']);
+      if (!amt || isNaN(amt) || amt <= 0) continue;
       const cid = await getOrCreateCustomer(row['Customer Name'], null);
       const appRes = await client.query(
         "INSERT INTO loan_application (application_number, customer_id, product_id, purpose, requested_amount, approved_amount, tenure_months, repayment_frequency, status) VALUES ($1, $2, $3, 'Daily Collection', $4, $4, 12, 'daily', 'disbursed') RETURNING id",
-        ['APP-COL-' + row['AC No'], cid, loanProductId, row['Loan Amount'] || 0]
+        ['APP-COL-' + row['AC No'], cid, loanProductId, amt]
       );
       await client.query(
         "INSERT INTO loan (loan_number, application_id, customer_id, product_id, branch_id, status, approved_amount, disbursed_amount, disbursed_on, tenure_months, repayment_frequency, interest_method, interest_rate, flat_interest_total, total_payable) VALUES ($1, $2, $3, $4, $5, 'active', $6, $6, $7, 12, 'daily', 'flat', 10.00, 0, $6)",
-        ['LN-COL-' + row['AC No'], appRes.rows[0].id, cid, loanProductId, branchId, row['Loan Amount'] || 0, excelDateToJSDate(row['Loan Disbursement Date']) || '2026-09-01']
+        ['LN-COL-' + row['AC No'], appRes.rows[0].id, cid, loanProductId, branchId, amt, excelDateToJSDate(row['Loan Disbursement Date']) || '2026-09-01']
       );
     }
 
