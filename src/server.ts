@@ -23,6 +23,7 @@ import { reconciliationRouter } from './modules/reconciliation/reconciliation.ro
 import { reportsRouter } from './modules/reports/reports.routes.js';
 import { auditRouter } from './modules/audit/audit.routes.js';
 import { notificationsRouter } from './modules/notifications/notifications.routes.js';
+import { scheduleEODJobs } from './core/jobs/scheduler.js';
 import { settingsRouter } from './modules/settings/settings.routes.js';
 import { dashboardRouter } from './modules/dashboard/dashboard.routes.js';
 
@@ -117,8 +118,13 @@ app.use('/api/v1/dashboard', dashboardRouter);
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-app.listen(env.port, () => {
+app.listen(env.port, async () => {
   console.log(`API listening on port ${env.port}`);
+  
+  // Initialize BullMQ EOD schedules
+  if (env.isProduction || env.nodeEnv === 'development') {
+    await scheduleEODJobs();
+  }
 });
 
 export { app };
