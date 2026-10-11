@@ -1503,7 +1503,7 @@ export async function createApplication(
       }
     }
 
-    const businessDate = istBusinessDate();
+    const businessDate = input.appliedOn ?? istBusinessDate();
     const sequence = await allocateSequence(client, 'loan_application');
     const applicationNumber = sequence.formatted;
     const documents: Record<string, unknown> = {

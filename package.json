@@ -11,7 +11,9 @@
         "test": "vitest run",
         "migrate": "tsx src/database/migrate.ts",
         "seed": "tsx src/database/seed.ts",
-        "db:setup": "tsx src/database/migrate.ts && tsx src/database/seed.ts"
+        "db:setup": "tsx src/database/migrate.ts && tsx src/database/seed.ts",
+        "templates:generate": "tsx src/scripts/generate_import_templates.ts",
+        "templates:validate": "tsx src/scripts/validate_import_templates.ts"
     },
     "dependencies": {
         "@node-rs/argon2": "^2.0.2",

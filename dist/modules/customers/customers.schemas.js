@@ -91,6 +91,7 @@ export const createCustomerSchema = z.object({
         .array(addressSchema)
         .min(1, 'At least one address is required (spec §8.1 — address is mandatory)'),
     identityDocuments: z.array(identityDocumentSchema).optional(),
+    registrationDate: dateOnlySchema.optional(),
 });
 export const updateCustomerSchema = z.object({
     fullName: z.string().trim().min(2).max(160).optional(),
@@ -107,6 +108,7 @@ export const updateCustomerSchema = z.object({
     guardianName: z.string().trim().max(120).nullable().optional(),
     guardianPhone: z.string().trim().max(20).nullable().optional(),
     kycMethod: z.string().trim().max(40).optional(),
+    registrationDate: dateOnlySchema.optional(),
     addresses: z.array(addressSchema).optional(),
     identityDocuments: z.array(identityDocumentSchema).optional(),
 });

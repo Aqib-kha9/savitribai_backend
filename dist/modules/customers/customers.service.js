@@ -520,9 +520,9 @@ export async function createCustomer(actor, input, meta = {}) {
            (customer_number, customer_type, full_name, date_of_birth, gender, occupation,
             business_type, mobile, alternate_phone, email, branch_id, membership_category,
             status, risk_category, aml_risk, source_of_funds, guardian_name, guardian_phone,
-            kyc_method, created_by)
+            kyc_method, created_by, registration_date)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active',
-                 $13, $14, $15, $16, $17, $18, $19)
+                 $13, $14, $15, $16, $17, $18, $19, $20, COALESCE($21::date, CURRENT_DATE))
          RETURNING id`, [
                 customerNumber,
                 input.customerType,
@@ -543,6 +543,7 @@ export async function createCustomer(actor, input, meta = {}) {
                 input.guardianPhone ?? null,
                 input.kycMethod ?? null,
                 actor.staffId,
+                input.registrationDate ?? null,
             ]);
             const inserted = insert.rows[0];
             if (!inserted)
@@ -793,6 +794,8 @@ export async function updateCustomer(actor, customerId, input, meta = {}) {
             push('guardian_phone', input.guardianPhone);
         if (input.kycMethod !== undefined)
             push('kyc_method', input.kycMethod);
+        if (input.registrationDate !== undefined)
+            push('registration_date', input.registrationDate);
         if (sets.length > 0) {
             await client.query(`UPDATE customer SET ${sets.join(', ')}, updated_at = now() WHERE id = $${values.length + 1}`, [
                 ...values,

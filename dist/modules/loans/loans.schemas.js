@@ -153,6 +153,7 @@ export const createApplicationSchema = z
     tenureMonths: z.coerce.number().int().min(1).max(240),
     repaymentFrequency: loanRepaymentFrequencySchema,
     proposedInterestRate: rateSchema.optional(),
+    appliedOn: dateOnlySchema.optional(),
     guarantors: z.array(guarantorSchema).max(20).optional(),
     collateral: z.array(collateralSchema).max(20).optional(),
     documents: z.record(z.string(), z.unknown()).optional(),

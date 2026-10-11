@@ -801,7 +801,7 @@ export async function createApplication(actor, input, meta = {}) {
                 throw new BusinessRuleError(`Collateral of ${valuation} supports at most ${product.max_ltv_percent}% lending (${maxSecured})`, 'COLLATERAL_VALUE_INSUFFICIENT');
             }
         }
-        const businessDate = istBusinessDate();
+        const businessDate = input.appliedOn ?? istBusinessDate();
         const sequence = await allocateSequence(client, 'loan_application');
         const applicationNumber = sequence.formatted;
         const documents = {

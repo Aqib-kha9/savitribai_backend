@@ -476,12 +476,12 @@ async function recomputeAccountTotals(client, accountId) {
  * collected) and a penalty is applied once per instalment. Called at the start
  * of every financial mutation so state is never allowed to drift.
  */
-async function sweepMissedInstalments(client, account, actor, meta) {
+async function sweepMissedInstalments(client, account, actor, meta, asOfDate) {
     const scheme = await selectSchemeById(client, account.scheme_id);
     if (!scheme)
         throw new NotFoundError('RD scheme');
     const { percent, cap } = penaltySettings(scheme);
-    const today = istBusinessDate();
+    const today = asOfDate ?? istBusinessDate();
     // due_date + grace months <= today  ⇔  due_date <= today − grace months
     const cutoff = addMonths(today, -account.grace_period_months);
     const due = await client.query(`SELECT id, instalment_number, due_date::text AS due_date,
@@ -885,8 +885,12 @@ export async function recordInstalmentPayment(actor, accountId, input, meta = {}
         if (!OPEN_STATUSES.includes(account.status)) {
             throw new BusinessRuleError(`Instalments can only be recorded on an active or overdue RD account (current status: ${account.status})`, 'ACCOUNT_NOT_PAYABLE');
         }
-        // State is kept honest before we touch the money.
-        await sweepMissedInstalments(client, account, actor, meta);
+        const paidOn = input.paidOn ?? istBusinessDate();
+        const paymentMethod = input.paymentMethod;
+        const referenceNumber = input.referenceNumber ?? null;
+        const collectionEntryId = input.collectionEntryId ?? null;
+        // State is kept honest as of the payment date before we touch the money.
+        await sweepMissedInstalments(client, account, actor, meta, paidOn);
         const due = await client.query(`SELECT id, instalment_number, due_date::text AS due_date,
               expected_amount::text AS expected_amount,
               paid_amount::text AS paid_amount,
@@ -899,10 +903,6 @@ export async function recordInstalmentPayment(actor, accountId, input, meta = {}
         if (dueRows.length === 0) {
             throw new BusinessRuleError('This RD account has no unpaid instalments', 'NO_DUE_INSTALMENTS');
         }
-        const paidOn = input.paidOn ?? istBusinessDate();
-        const paymentMethod = input.paymentMethod;
-        const referenceNumber = input.referenceNumber ?? null;
-        const collectionEntryId = input.collectionEntryId ?? null;
         // Allocate the payment across due instalments, oldest first (spec §10.5).
         const allocationEvents = [];
         let remaining = toCents(input.amount);
