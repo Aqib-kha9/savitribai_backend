@@ -2,6 +2,7 @@ import { query, transaction } from '../../database/client.js';
 import { appendAuditEvent, AUDIT_ACTIONS } from '../../audit/audit-writer.js';
 import { istBusinessDate } from '../../core/time.js';
 import { BadRequestError, BusinessRuleError, ConflictError, InternalError, NotFoundError, } from '../../core/errors.js';
+import { isSuperAdmin } from '../../core/permissions.js';
 import { allocateSequence, customerNumberFrom } from '../../database/numbering.js';
 /**
  * Customers & nominees service (docs/backend-master-spec.md §8).
@@ -514,6 +515,7 @@ export async function createCustomer(actor, input, meta = {}) {
         }
         const sequence = await allocateSequence(client, 'customer');
         const customerNumber = customerNumberFrom(input.fullName, sequence);
+        const initialStatus = isSuperAdmin(actor.role) ? 'active' : 'pending_approval';
         let customerId;
         try {
             const insert = await client.query(`INSERT INTO customer
@@ -521,8 +523,8 @@ export async function createCustomer(actor, input, meta = {}) {
             business_type, mobile, alternate_phone, email, branch_id, membership_category,
             status, risk_category, aml_risk, source_of_funds, guardian_name, guardian_phone,
             kyc_method, created_by, registration_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active',
-                 $13, $14, $15, $16, $17, $18, $19, $20, COALESCE($21::date, CURRENT_DATE))
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                 $14, $15, $16, $17, $18, $19, $20, COALESCE($21::date, CURRENT_DATE))
          RETURNING id`, [
                 customerNumber,
                 input.customerType,
@@ -536,6 +538,7 @@ export async function createCustomer(actor, input, meta = {}) {
                 input.email ?? null,
                 input.branchId,
                 input.membershipCategory,
+                initialStatus,
                 input.riskCategory ?? null,
                 input.amlRisk ?? null,
                 input.sourceOfFunds ?? null,
@@ -581,8 +584,32 @@ export async function createCustomer(actor, input, meta = {}) {
         for (const doc of input.identityDocuments ?? []) {
             await insertIdentityDocument(client, customerId, doc);
         }
-        // KYC lifecycle row — starts pending; Manager approval flips it later.
+        // KYC lifecycle row — starts pending; Manager/Super Admin approval flips it later.
         await ensureKycRow(client, customerId);
+        // Queue in-app notification for Branch Manager & Super Admin if pending approval
+        if (initialStatus === 'pending_approval') {
+            try {
+                await client.query(`INSERT INTO notification_outbox
+             (event_type, channel, customer_id, recipient, payload, status)
+           VALUES ($1, $2, $3, $4, $5, 'queued')`, [
+                    'customer_pending_approval',
+                    'app_notification',
+                    customerId,
+                    'management',
+                    JSON.stringify({
+                        customerId,
+                        customerNumber,
+                        customerName: input.fullName,
+                        createdByStaffId: actor.staffId,
+                        createdByStaffCode: actor.staffCode,
+                        createdByRole: actor.role,
+                    }),
+                ]);
+            }
+            catch {
+                // Notification enqueue is best effort
+            }
+        }
         await audit(client, {
             ...actorAuditBase(actor),
             requestId: meta.requestId ?? null,
@@ -594,12 +621,51 @@ export async function createCustomer(actor, input, meta = {}) {
                 customerType: input.customerType,
                 branchId: input.branchId,
                 mobile: input.mobile,
+                status: initialStatus,
                 createdBy: actor.staffId,
             },
         });
         return loadCustomerDetail(client, customerId);
     });
     return created;
+}
+export async function approveCustomer(actor, customerId, meta = {}) {
+    const approved = await transaction(async (client) => {
+        const existing = await selectCustomerById(client, customerId);
+        if (!existing)
+            throw new NotFoundError('Customer');
+        if (existing.status === 'active') {
+            return loadCustomerDetail(client, customerId);
+        }
+        if (existing.status !== 'pending_approval') {
+            throw new BusinessRuleError(`Customer is ${existing.status} and cannot be approved`, 'CUSTOMER_CANNOT_BE_APPROVED');
+        }
+        await client.query(`UPDATE customer
+          SET status = 'active', updated_at = now()
+        WHERE id = $1`, [customerId]);
+        await ensureKycRow(client, customerId);
+        await client.query(`UPDATE customer_kyc
+          SET status = 'approved',
+              verified_by = $2,
+              verified_on = now(),
+              rejection_reason = NULL,
+              updated_at = now()
+        WHERE customer_id = $1`, [customerId, actor.staffId]);
+        await audit(client, {
+            ...actorAuditBase(actor),
+            requestId: meta.requestId ?? null,
+            action: 'customers.approved',
+            entityType: 'customer',
+            entityId: customerId,
+            metadata: {
+                customerNumber: existing.customer_number,
+                approvedBy: actor.staffId,
+                approvedByRole: actor.role,
+            },
+        });
+        return loadCustomerDetail(client, customerId);
+    });
+    return approved;
 }
 /**
  * Build the shared WHERE clause for customer list / export queries.

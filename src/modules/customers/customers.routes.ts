@@ -16,6 +16,7 @@ import {
   deathNotification,
   transferCustomer,
   approveKyc,
+  approveCustomer,
   setNominee,
   recordConsents,
   recordComplaint,
@@ -223,6 +224,20 @@ customersRouter.post('/:id/kyc/approve', authenticate, requireRole('manager', 'm
   const customer = await approveKyc(actor, idParam(request), input, requestMeta(request));
   response.status(200).json(customer);
 });
+
+// POST /api/v1/customers/:id/approve — final approval for a new customer
+// Allowed authorities: Branch Manager (Manager), Super Admin, Managing Director,
+// Vice President, President.
+customersRouter.post(
+  '/:id/approve',
+  authenticate,
+  requireRole('manager', 'managing_director', 'vice_president', 'president', 'super_admin'),
+  async (request, response) => {
+    const actor = authOf(request);
+    const customer = await approveCustomer(actor, idParam(request), requestMeta(request));
+    response.status(200).json(customer);
+  },
+);
 
 // POST /api/v1/customers/:id/nominee — set/replace the current nominee
 // (previous nominee is superseded and retained in nominee_history).

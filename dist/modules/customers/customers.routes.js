@@ -3,7 +3,7 @@ import { authenticate, requirePermission, requireRole } from '../../middleware/a
 import { parse, validateBody } from '../../middleware/validate.js';
 import { UnauthorizedError } from '../../core/errors.js';
 import { istBusinessDate } from '../../core/time.js';
-import { createCustomer, listCustomers, exportCustomers, getCustomer, listCustomerDocuments, updateCustomer, changeCustomerStatus, deathNotification, transferCustomer, approveKyc, setNominee, recordConsents, recordComplaint, mergeCustomers, listFieldVerifications, createDataSubjectRequest, listDataSubjectRequests, decideDataSubjectRequest, } from './customers.service.js';
+import { createCustomer, listCustomers, exportCustomers, getCustomer, listCustomerDocuments, updateCustomer, changeCustomerStatus, deathNotification, transferCustomer, approveKyc, approveCustomer, setNominee, recordConsents, recordComplaint, mergeCustomers, listFieldVerifications, createDataSubjectRequest, listDataSubjectRequests, decideDataSubjectRequest, } from './customers.service.js';
 import { createCustomerSchema, updateCustomerSchema, changeStatusSchema, transferCustomerSchema, kycApproveSchema, nomineeSchema, consentsSchema, complaintSchema, mergeSchema, deathNotificationSchema, listCustomersQuerySchema, exportCustomersQuerySchema, idParamSchema, createDataSubjectRequestSchema, decideDataSubjectRequestSchema, dataSubjectRequestIdParamSchema, } from './customers.schemas.js';
 /**
  * Customer registry HTTP surface (docs/backend-master-spec.md §8).
@@ -153,6 +153,14 @@ customersRouter.post('/:id/kyc/approve', authenticate, requireRole('manager', 'm
     const actor = authOf(request);
     const input = request.body;
     const customer = await approveKyc(actor, idParam(request), input, requestMeta(request));
+    response.status(200).json(customer);
+});
+// POST /api/v1/customers/:id/approve — final approval for a new customer
+// Allowed authorities: Branch Manager (Manager), Super Admin, Managing Director,
+// Vice President, President.
+customersRouter.post('/:id/approve', authenticate, requireRole('manager', 'managing_director', 'vice_president', 'president', 'super_admin'), async (request, response) => {
+    const actor = authOf(request);
+    const customer = await approveCustomer(actor, idParam(request), requestMeta(request));
     response.status(200).json(customer);
 });
 // POST /api/v1/customers/:id/nominee — set/replace the current nominee

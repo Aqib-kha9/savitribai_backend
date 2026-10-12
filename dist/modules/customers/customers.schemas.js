@@ -19,6 +19,7 @@ export const customerTypeSchema = z.enum([
 ]);
 export const customerStatusSchema = z.enum([
     'active',
+    'pending_approval',
     'inactive',
     'blocked',
     'deceased',

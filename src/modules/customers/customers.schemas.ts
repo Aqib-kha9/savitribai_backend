@@ -25,6 +25,7 @@ export type CustomerType = z.infer<typeof customerTypeSchema>;
 
 export const customerStatusSchema = z.enum([
   'active',
+  'pending_approval',
   'inactive',
   'blocked',
   'deceased',

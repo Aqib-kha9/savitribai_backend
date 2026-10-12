@@ -119,6 +119,7 @@ export const ROLE_PERMISSIONS = {
     ],
     cashier: [
         'customers.read',
+        'customers.write',
         'deposits.read',
         'deposits.write',
         'withdrawals.read',
