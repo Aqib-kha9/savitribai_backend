@@ -428,7 +428,15 @@ export async function createAccount(actor, input, meta = {}) {
         if (product.max_balance && compareMoney(input.openingAmount, product.max_balance) > 0) {
             throw new BusinessRuleError(`Opening amount exceeds the product maximum of ${product.max_balance}`, 'OPENING_AMOUNT_ABOVE_MAX');
         }
-        const sequence = await allocateSequence(client, 'savings_account');
+        const isDaily = product.code === 'SAV-DLY' || product.name.toLowerCase().includes('daily');
+        const seqEntity = isDaily ? 'daily_deposit' : 'savings_account';
+        let sequence;
+        try {
+            sequence = await allocateSequence(client, seqEntity);
+        }
+        catch {
+            sequence = await allocateSequence(client, 'savings_account');
+        }
         const accountNumber = sequence.formatted;
         const openedOn = input.openedOn ?? istBusinessDate();
         // The account snapshots the product's interest rate at opening so later

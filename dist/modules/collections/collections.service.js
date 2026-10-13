@@ -416,7 +416,26 @@ async function insertCollectionEntry(client, p) {
         p.visitLogId,
     ]);
     const row = entry.rows[0];
-    const sequence = await allocateSequence(client, p.receiptKind === 'monthly' ? 'receipt_monthly' : 'receipt_daily');
+    let receiptSeq = p.receiptKind === 'monthly' ? 'receipt_monthly' : 'receipt_daily';
+    if (p.productType === 'loan') {
+        receiptSeq = 'receipt_loan';
+    }
+    else if (p.productType === 'recurringDeposit') {
+        receiptSeq = 'receipt_rd';
+    }
+    else if (p.accountNumber.startsWith('DDA') || p.productLabel.toLowerCase().includes('daily')) {
+        receiptSeq = 'receipt_dd';
+    }
+    else if (p.productType === 'savingsDeposit') {
+        receiptSeq = 'receipt_sb';
+    }
+    let sequence;
+    try {
+        sequence = await allocateSequence(client, receiptSeq);
+    }
+    catch {
+        sequence = await allocateSequence(client, p.receiptKind === 'monthly' ? 'receipt_monthly' : 'receipt_daily');
+    }
     await client.query(`INSERT INTO collection_receipt
        (collection_id, receipt_number, receipt_kind, agent_code, customer_name,
         account_number, product_label, amount, mode, instrument_ref, acknowledged)

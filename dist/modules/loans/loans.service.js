@@ -1035,7 +1035,14 @@ export async function disburseLoan(actor, applicationId, input, meta = {}) {
         const equalWeights = Array(dueDates.length).fill(1n);
         const instalmentAmounts = allocateByWeights(totalPayable, equalWeights);
         // --- loan ---------------------------------------------------------------
-        const loanSequence = await allocateSequence(client, 'loan');
+        const seqEntity = frequency === 'daily' ? 'daily_loan' : 'loan';
+        let loanSequence;
+        try {
+            loanSequence = await allocateSequence(client, seqEntity);
+        }
+        catch {
+            loanSequence = await allocateSequence(client, 'loan');
+        }
         const loanNumber = loanSequence.formatted;
         let loanId;
         try {

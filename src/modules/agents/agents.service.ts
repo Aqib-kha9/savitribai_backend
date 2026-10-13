@@ -693,45 +693,28 @@ export async function assignCustomers(
       for (const customerId of input.customerIds) {
         const active = await client.query<{
           id: string;
-          agent_id: string;
         }>(
-          `SELECT id, agent_id
+          `SELECT id
              FROM agent_customer_assignment
-            WHERE customer_id = $1 AND is_active
+            WHERE agent_id = $1 AND customer_id = $2 AND is_active
             ORDER BY effective_from DESC, created_at DESC
             LIMIT 1`,
-          [customerId],
+          [agentId, customerId],
         );
         const activeRow = active.rows[0];
 
-        // Idempotent — the customer is already assigned to this agent.
-        if (activeRow && activeRow.agent_id === agentId) {
+        // Idempotent — the customer is already actively assigned to this agent.
+        if (activeRow) {
           assignedCustomerIds.push(customerId);
           continue;
         }
 
-        if (activeRow) {
-          await client.query(
-            `UPDATE agent_customer_assignment
-                SET is_active = false, effective_to = $1, updated_at = now()
-              WHERE id = $2`,
-            [effectiveFrom, activeRow.id],
-          );
-          await client.query(
-            `INSERT INTO agent_transfer_log
-               (agent_id, customer_id, from_agent_id, action, reason, performed_by)
-             VALUES ($1, $2, $3, 'reassigned', $4, $5)`,
-            [agentId, customerId, activeRow.agent_id, input.reason ?? null, actor.staffId],
-          );
-          anyReassigned = true;
-        } else {
-          await client.query(
-            `INSERT INTO agent_transfer_log
-               (agent_id, customer_id, from_agent_id, action, reason, performed_by)
-             VALUES ($1, $2, NULL, 'assigned', $3, $4)`,
-            [agentId, customerId, input.reason ?? null, actor.staffId],
-          );
-        }
+        await client.query(
+          `INSERT INTO agent_transfer_log
+             (agent_id, customer_id, from_agent_id, action, reason, performed_by)
+           VALUES ($1, $2, NULL, 'assigned', $3, $4)`,
+          [agentId, customerId, input.reason ?? null, actor.staffId],
+        );
 
         await client.query(
           `INSERT INTO agent_customer_assignment
@@ -1161,6 +1144,7 @@ export interface AssignedProductView {
   installmentAmount: number;
   outstandingAmount: number;
   frequency: string | null;
+  sanctionedAmount?: number;
 }
 
 type CustomerAssignmentRow = {
@@ -1187,6 +1171,8 @@ type SavingsProductRow = {
   id: string;
   customer_id: string;
   account_number: string;
+  product_code: string | null;
+  product_name: string | null;
 };
 
 type RdProductRow = {
@@ -1202,8 +1188,10 @@ type LoanProductRow = {
   id: string;
   customer_id: string;
   account_number: string;
+  approved_amount: number | null;
   outstanding_amount: number | null;
   frequency: string | null;
+  instalment_amount: number | null;
 };
 
 function formatAddress(row: CustomerAddressRow): string {
@@ -1261,10 +1249,12 @@ export async function getMyAssignments(
     addressesByCustomer.set(address.customer_id, bucket);
   }
 
-  // Active savings accounts (no fixed installment; outstanding is 0).
+  // Active savings accounts and daily deposit accounts.
   const savings = await query<SavingsProductRow>(
-    `SELECT sa.id, sa.customer_id, sa.account_number
+    `SELECT sa.id, sa.customer_id, sa.account_number,
+            dp.code AS product_code, dp.name AS product_name
        FROM savings_account sa
+       LEFT JOIN deposit_product dp ON dp.id = sa.product_id
       WHERE sa.customer_id = ANY($1::uuid[]) AND sa.status = 'active'`,
     [customerIds],
   );
@@ -1280,13 +1270,28 @@ export async function getMyAssignments(
       WHERE ra.customer_id = ANY($1::uuid[]) AND ra.status IN ('active', 'overdue')`,
     [customerIds],
   );
-  // Active / overdue loans (installment varies by schedule; outstanding shown).
+  // Active / overdue loans (installment varies by schedule; query next unpaid installment amount).
   const loans = await query<LoanProductRow>(
     `SELECT l.id,
             l.customer_id,
             l.loan_number AS account_number,
+            l.approved_amount::float8    AS approved_amount,
             l.outstanding_amount::float8 AS outstanding_amount,
-            l.repayment_frequency        AS frequency
+            l.repayment_frequency        AS frequency,
+            COALESCE(
+              (SELECT li.expected_amount::float8
+                 FROM loan_instalment li
+                WHERE li.loan_id = l.id
+                  AND li.status IN ('due', 'overdue', 'partial')
+                ORDER BY li.due_date ASC, li.instalment_number ASC
+                LIMIT 1),
+              (SELECT li2.expected_amount::float8
+                 FROM loan_instalment li2
+                WHERE li2.loan_id = l.id
+                ORDER BY li2.instalment_number ASC
+                LIMIT 1),
+              0
+            ) AS instalment_amount
        FROM loan l
       WHERE l.customer_id = ANY($1::uuid[]) AND l.status IN ('active', 'overdue')`,
     [customerIds],
@@ -1295,13 +1300,16 @@ export async function getMyAssignments(
   const productsByCustomer = new Map<string, AssignedProductView[]>();
   for (const row of savings.rows) {
     const bucket = productsByCustomer.get(row.customer_id) ?? [];
+    const isDaily = row.account_number.startsWith('DDA') ||
+                    (row.product_code ?? '') === 'SAV-DLY' ||
+                    (row.product_name ?? '').toLowerCase().includes('daily');
     bucket.push({
       id: row.id,
-      type: 'savingsDeposit',
+      type: isDaily ? 'dailyDeposit' : 'savingsDeposit',
       accountNumber: row.account_number,
-      installmentAmount: 0,
+      installmentAmount: isDaily ? 100 : 0,
       outstandingAmount: 0,
-      frequency: null,
+      frequency: isDaily ? 'daily' : null,
     });
     productsByCustomer.set(row.customer_id, bucket);
   }
@@ -1323,9 +1331,10 @@ export async function getMyAssignments(
       id: row.id,
       type: 'loan',
       accountNumber: row.account_number,
-      installmentAmount: 0,
+      installmentAmount: row.instalment_amount ?? 0,
       outstandingAmount: row.outstanding_amount ?? 0,
       frequency: row.frequency,
+      sanctionedAmount: row.approved_amount ?? 0,
     });
     productsByCustomer.set(row.customer_id, bucket);
   }

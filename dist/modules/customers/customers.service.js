@@ -322,19 +322,20 @@ async function selectComplaints(client, customerId) {
         createdAt: row.created_at.toISOString(),
     }));
 }
-/** Resolves the currently assigned collection agent (staff or agent code). */
+/** Resolves the currently assigned collection agents (staff or agent code). */
 async function selectAssignedAgent(client, customerId) {
     const result = await client.query(`SELECT st.full_name AS staff_name, a.agent_code
        FROM agent_customer_assignment aca
        JOIN agent a ON a.id = aca.agent_id
        JOIN staff st ON st.id = a.staff_id
       WHERE aca.customer_id = $1 AND aca.is_active
-      ORDER BY aca.effective_from DESC
-      LIMIT 1`, [customerId]);
-    const row = result.rows[0];
-    if (!row)
+      ORDER BY aca.effective_from DESC, st.full_name ASC`, [customerId]);
+    if (result.rows.length === 0)
         return null;
-    return row.staff_name ?? row.agent_code ?? null;
+    const names = result.rows
+        .map((row) => row.staff_name ?? row.agent_code)
+        .filter((name) => Boolean(name && name.trim()));
+    return names.length > 0 ? names.join(', ') : null;
 }
 /** Human-readable label for an account lifecycle status. */
 const SERVICE_STATUS_LABEL = {
