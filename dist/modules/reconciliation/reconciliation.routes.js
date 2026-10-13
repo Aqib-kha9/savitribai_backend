@@ -102,9 +102,9 @@ reconciliationRouter.post('/digital-settlement', authenticate, requirePermission
     const settlement = await recordDigitalSettlement(actor, input, requestMeta(request));
     response.status(201).json(settlement);
 });
-// POST /api/v1/reconciliation/difference — M.D. marks a reconciliation
+// POST /api/v1/reconciliation/difference — marks a reconciliation
 // difference explained/accepted/recovered/waived/unresolved (spec §16.1/§16.5).
-reconciliationRouter.post('/difference', authenticate, requireRole('managing_director'), validateBody(markDifferenceSchema), async (request, response) => {
+reconciliationRouter.post('/difference', authenticate, requireRole('managing_director', 'president'), validateBody(markDifferenceSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const difference = await markDifference(actor, input, requestMeta(request));
@@ -121,10 +121,10 @@ reconciliationRouter.get('/:id', authenticate, requirePermission('reconciliation
     const detail = await getReconciliationDetail(actor, idParam(request), requestMeta(request));
     response.status(200).json(detail);
 });
-// POST /api/v1/reconciliation/:id/reopen — President approves reopening a
+// POST /api/v1/reconciliation/:id/reopen — President or M.D. approves reopening a
 // completed (closed/locked) reconciliation (spec §16.5). The day returns to
 // 'reopened' and must be re-approved before it is locked again.
-reconciliationRouter.post('/:id/reopen', authenticate, requireRole('president'), validateBody(reopenDayCloseSchema), async (request, response) => {
+reconciliationRouter.post('/:id/reopen', authenticate, requireRole('president', 'managing_director'), validateBody(reopenDayCloseSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const dayClose = await reopenDayClose(actor, idParam(request), input, requestMeta(request));

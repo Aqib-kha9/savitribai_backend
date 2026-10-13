@@ -124,8 +124,8 @@ reportsRouter.get('/:id/download', authenticate, requirePermission('reports.expo
 
 // POST /api/v1/reports/:id/share — record-only sharing consent. Appends
 // {recipient, channel, note?, sharedAt} to generated_report.shared_with, sets
-// share_consent_by, and audits REPORT_SHARED. Managing Director role only.
-reportsRouter.post('/:id/share', authenticate, requirePermission('reports.export'), requireRole('managing_director'), validateBody(shareReportSchema), async (request, response) => {
+// share_consent_by, and audits REPORT_SHARED. Managing Director and President roles.
+reportsRouter.post('/:id/share', authenticate, requirePermission('reports.export'), requireRole('president', 'managing_director'), validateBody(shareReportSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as ShareReportInput;
   const result = await shareReport(actor, idParam(request), input, requestMeta(request));

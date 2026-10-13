@@ -100,14 +100,14 @@ withdrawalsRouter.post('/:id/reject', authenticate, requirePermission('withdrawa
 });
 // POST /api/v1/withdrawals/:id/pay — record identity verification + payout
 // reference and debit the linked savings ledger (spec §13.4).
-withdrawalsRouter.post('/:id/pay', authenticate, requirePermission('withdrawals.approve'), validateBody(payWithdrawalSchema), async (request, response) => {
+withdrawalsRouter.post('/:id/pay', authenticate, requireRole('super_admin', 'managing_director', 'president', 'vice_president', 'manager', 'cashier'), validateBody(payWithdrawalSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const withdrawal = await payWithdrawal(actor, idParam(request), input, requestMeta(request));
     response.status(200).json(withdrawal);
 });
 // POST /api/v1/withdrawals/:id/confirm — confirm a paid payout (terminal state).
-withdrawalsRouter.post('/:id/confirm', authenticate, requirePermission('withdrawals.approve'), validateBody(confirmWithdrawalSchema), async (request, response) => {
+withdrawalsRouter.post('/:id/confirm', authenticate, requireRole('super_admin', 'managing_director', 'president', 'vice_president', 'manager', 'cashier'), validateBody(confirmWithdrawalSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const withdrawal = await confirmWithdrawal(actor, idParam(request), input, requestMeta(request));
@@ -136,8 +136,8 @@ withdrawalsRouter.post('/:id/cancel', authenticate, requirePermission('withdrawa
 // cancel, the money has already left the bank, so a compensating credit is
 // posted back into the source savings account (the original debit stays
 // immutable) and the request moves to the terminal 'reversed' state. Reserved to
-// the Managing Director.
-withdrawalsRouter.post('/:id/reverse', authenticate, requireRole('managing_director'), validateBody(reverseWithdrawalSchema), async (request, response) => {
+// the Managing Director and President.
+withdrawalsRouter.post('/:id/reverse', authenticate, requireRole('president', 'managing_director'), validateBody(reverseWithdrawalSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const withdrawal = await reverseWithdrawal(actor, idParam(request), input, requestMeta(request));

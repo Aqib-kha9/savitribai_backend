@@ -170,16 +170,16 @@ authRouter.get('/devices', authenticate, async (request, response) => {
   response.status(200).json(devices);
 });
 
-// POST /api/v1/auth/devices/:id/confirm — approve a pending device (M.D.).
-authRouter.post('/devices/:id/confirm', authenticate, requireRole('managing_director'), async (request, response) => {
+// POST /api/v1/auth/devices/:id/confirm — approve a pending device (M.D. / President).
+authRouter.post('/devices/:id/confirm', authenticate, requireRole('president', 'managing_director'), async (request, response) => {
   const actor = authOf(request);
   const device = await confirmDevice(idParam(request), actor, requestMeta(request));
   response.status(200).json(device);
 });
 
-// DELETE /api/v1/auth/devices/:id — disable a device immediately (M.D.).
+// DELETE /api/v1/auth/devices/:id — disable a device immediately (M.D. / President).
 // Also revokes every live session bound to the device.
-authRouter.delete('/devices/:id', authenticate, requireRole('managing_director'), validateBody(disableDeviceSchema), async (request, response) => {
+authRouter.delete('/devices/:id', authenticate, requireRole('president', 'managing_director'), validateBody(disableDeviceSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as DisableDeviceInput;
   const device = await disableDevice(idParam(request), actor, input, requestMeta(request));
@@ -196,17 +196,17 @@ identityRouter.get('/staff', authenticate, requirePermission('security.read'), a
   response.status(200).json(result);
 });
 
-// POST /api/v1/identity/staff — create a staff account (M.D.).
-identityRouter.post('/staff', authenticate, requireRole('managing_director'), validateBody(createStaffSchema), async (request, response) => {
+// POST /api/v1/identity/staff — create a staff account (M.D. / President).
+identityRouter.post('/staff', authenticate, requireRole('president', 'managing_director'), validateBody(createStaffSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as CreateStaffInput;
   const staff = await createStaff(actor, input, requestMeta(request));
   response.status(201).json(staff);
 });
 
-// PATCH /api/v1/identity/staff/:id — update staff profile / re-register (M.D.).
+// PATCH /api/v1/identity/staff/:id — update staff profile / re-register (M.D. / President).
 // Reactivation of a disabled account requires a new password + N.D.A. flag.
-identityRouter.patch('/staff/:id', authenticate, requireRole('managing_director'), validateBody(updateStaffSchema), async (request, response) => {
+identityRouter.patch('/staff/:id', authenticate, requireRole('president', 'managing_director'), validateBody(updateStaffSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as UpdateStaffInput;
   const staff = await updateStaff(actor, idParam(request), input, requestMeta(request));
@@ -221,8 +221,8 @@ identityRouter.post('/staff/:id/unlock', authenticate, requirePermission('securi
   response.status(200).json(staff);
 });
 
-// POST /api/v1/identity/staff/:id/deactivate — staff exit process (M.D.).
-identityRouter.post('/staff/:id/deactivate', authenticate, requireRole('managing_director'), validateBody(deactivateStaffSchema), async (request, response) => {
+// POST /api/v1/identity/staff/:id/deactivate — staff exit process (M.D. / President).
+identityRouter.post('/staff/:id/deactivate', authenticate, requireRole('president', 'managing_director'), validateBody(deactivateStaffSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as DeactivateStaffInput;
   const staff = await deactivateStaff(actor, idParam(request), input, requestMeta(request));

@@ -99,7 +99,7 @@ agentsRouter.get('/', authenticate, requirePermission('agents.read'), async (req
 });
 // POST /api/v1/agents — onboard a collection agent (spec §15.1). The staff
 // member must hold the collection_agent role; ID/address proof is mandatory.
-agentsRouter.post('/', authenticate, requireRole('managing_director'), validateBody(onboardAgentSchema), async (request, response) => {
+agentsRouter.post('/', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(onboardAgentSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const agent = await onboardAgent(actor, input, requestMeta(request));
@@ -115,33 +115,33 @@ agentsRouter.get('/:id', authenticate, requirePermission('agents.read'), async (
     response.status(200).json(agent);
 });
 // PATCH /api/v1/agents/:id — update agent profile details (no status changes).
-agentsRouter.patch('/:id', authenticate, requireRole('managing_director'), validateBody(updateAgentSchema), async (request, response) => {
+agentsRouter.patch('/:id', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(updateAgentSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const agent = await updateAgent(actor, idParam(request), input, requestMeta(request));
     response.status(200).json(agent);
 });
 // POST /api/v1/agents/:id/activate — activate a pending/suspended agent.
-agentsRouter.post('/:id/activate', authenticate, requireRole('managing_director'), async (request, response) => {
+agentsRouter.post('/:id/activate', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), async (request, response) => {
     const actor = authOf(request);
     const agent = await activateAgent(actor, idParam(request), requestMeta(request));
     response.status(200).json(agent);
 });
 // POST /api/v1/agents/:id/suspend — suspend an active agent.
-agentsRouter.post('/:id/suspend', authenticate, requireRole('managing_director'), async (request, response) => {
+agentsRouter.post('/:id/suspend', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), async (request, response) => {
     const actor = authOf(request);
     const agent = await suspendAgent(actor, idParam(request), requestMeta(request));
     response.status(200).json(agent);
 });
 // POST /api/v1/agents/:id/reactivate — reactivate a suspended agent.
-agentsRouter.post('/:id/reactivate', authenticate, requireRole('managing_director'), async (request, response) => {
+agentsRouter.post('/:id/reactivate', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), async (request, response) => {
     const actor = authOf(request);
     const agent = await reactivateAgent(actor, idParam(request), requestMeta(request));
     response.status(200).json(agent);
 });
 // POST /api/v1/agents/:id/deactivate — deactivate an agent. Active customer
 // assignments are closed so the customers can be reassigned.
-agentsRouter.post('/:id/deactivate', authenticate, requireRole('managing_director'), async (request, response) => {
+agentsRouter.post('/:id/deactivate', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), async (request, response) => {
     const actor = authOf(request);
     const agent = await deactivateAgent(actor, idParam(request), requestMeta(request));
     response.status(200).json(agent);
@@ -156,18 +156,18 @@ agentsRouter.post('/:id/assignments', authenticate, requireRole('managing_direct
     const result = await assignCustomers(actor, idParam(request), input, requestMeta(request));
     response.status(200).json(result);
 });
-// POST /api/v1/agents/:id/route-exchange — M.D. approves a route exchange that
+// POST /api/v1/agents/:id/route-exchange — approves a route exchange that
 // transfers the agent's customers (and optionally route) to another agent.
-agentsRouter.post('/:id/route-exchange', authenticate, requireRole('managing_director'), validateBody(routeExchangeSchema), async (request, response) => {
+agentsRouter.post('/:id/route-exchange', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(routeExchangeSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const exchange = await requestRouteExchange(actor, idParam(request), input, requestMeta(request));
     response.status(201).json(exchange);
 });
-// POST /api/v1/agents/:id/out-of-area-approval — M.D. approves emergency
+// POST /api/v1/agents/:id/out-of-area-approval — approves emergency
 // collections outside the agent's normal area (spec §14.1). Recorded as an
 // audit event (no dedicated table exists); the agent device gets the approval.
-agentsRouter.post('/:id/out-of-area-approval', authenticate, requireRole('managing_director'), validateBody(outOfAreaApprovalSchema), async (request, response) => {
+agentsRouter.post('/:id/out-of-area-approval', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(outOfAreaApprovalSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await approveOutOfArea(actor, idParam(request), input, requestMeta(request));
@@ -175,7 +175,7 @@ agentsRouter.post('/:id/out-of-area-approval', authenticate, requireRole('managi
 });
 // POST /api/v1/agents/:id/devices/:deviceId/disable — disable a lost/stolen
 // device and revoke its live sessions immediately (spec §15.1).
-agentsRouter.post('/:id/devices/:deviceId/disable', authenticate, requireRole('managing_director'), validateBody(disableDeviceSchema), async (request, response) => {
+agentsRouter.post('/:id/devices/:deviceId/disable', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(disableDeviceSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await disableAgentDevice(actor, agentIdParam(request), deviceIdParam(request), input, requestMeta(request));

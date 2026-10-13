@@ -68,10 +68,10 @@ loansRouter.get('/products', authenticate, requirePermission('loans.read'), asyn
     const result = await listProducts(actor, query, requestMeta(request));
     response.status(200).json(result);
 });
-// POST /api/v1/loans/products — define a loan product (M.D. only). Per-product
+// POST /api/v1/loans/products — define a loan product (M.D. / President). Per-product
 // configuration: rate policy, repayment frequency incl. weekly, penalty
 // configuration and allocation order (spec §12.1, §12.3).
-loansRouter.post('/products', authenticate, requireRole('managing_director'), validateBody(createProductSchema), async (request, response) => {
+loansRouter.post('/products', authenticate, requireRole('president', 'managing_director'), validateBody(createProductSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const product = await createProduct(actor, input, requestMeta(request));
@@ -104,8 +104,8 @@ loansRouter.post('/applications/:id/recommend', authenticate, requirePermission(
     response.status(200).json(application);
 });
 // POST /api/v1/loans/applications/:id/approve — approve or reject a recommended
-// application (President; M.D. secondary).
-loansRouter.post('/applications/:id/approve', authenticate, requireRole('president', 'managing_director'), validateBody(approveSchema), async (request, response) => {
+// application (President, VP, M.D.).
+loansRouter.post('/applications/:id/approve', authenticate, requireRole('president', 'vice_president', 'managing_director'), validateBody(approveSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const application = await approveApplication(actor, applicationIdParam(request), input, requestMeta(request));
@@ -161,10 +161,10 @@ loansRouter.post('/:id/repayments', authenticate, requirePermission('loans.write
     const result = await recordRepayment(actor, loanIdParam(request), input, requestMeta(request));
     response.status(201).json(result);
 });
-// POST /api/v1/loans/:id/repayments/:rid/correct — M.D. correction of a
+// POST /api/v1/loans/:id/repayments/:rid/correct — M.D. / President correction of a
 // wrongly-recorded repayment on one instalment (adjustment record, spec §12.3,
 // §19.2).
-loansRouter.post('/:id/repayments/:rid/correct', authenticate, requireRole('managing_director'), validateBody(correctRepaymentSchema), async (request, response) => {
+loansRouter.post('/:id/repayments/:rid/correct', authenticate, requireRole('president', 'managing_director'), validateBody(correctRepaymentSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await correctRepayment(actor, loanIdParam(request), repaymentIdParam(request), input, requestMeta(request));
@@ -174,24 +174,24 @@ loansRouter.post('/:id/repayments/:rid/correct', authenticate, requireRole('mana
 // Loan lifecycle completion (spec §12.3; President authorities)
 // ---------------------------------------------------------------------------
 // POST /api/v1/loans/:id/reschedule — re-amortise the remaining principal over
-// a new term (President).
-loansRouter.post('/:id/reschedule', authenticate, requireRole('president'), validateBody(rescheduleSchema), async (request, response) => {
+// a new term (President, VP, M.D.).
+loansRouter.post('/:id/reschedule', authenticate, requireRole('president', 'vice_president', 'managing_director'), validateBody(rescheduleSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await rescheduleLoan(actor, loanIdParam(request), input, requestMeta(request));
     response.status(200).json(result);
 });
 // POST /api/v1/loans/:id/settle — full settlement of a fully-paid loan
-// (President).
-loansRouter.post('/:id/settle', authenticate, requireRole('president'), validateBody(settleSchema), async (request, response) => {
+// (President, VP, M.D.).
+loansRouter.post('/:id/settle', authenticate, requireRole('president', 'vice_president', 'managing_director'), validateBody(settleSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await settleLoan(actor, loanIdParam(request), input, requestMeta(request));
     response.status(200).json(result);
 });
 // POST /api/v1/loans/:id/write-off — write off the outstanding balance
-// (President).
-loansRouter.post('/:id/write-off', authenticate, requireRole('president'), validateBody(writeOffSchema), async (request, response) => {
+// (President, VP, M.D.).
+loansRouter.post('/:id/write-off', authenticate, requireRole('president', 'vice_president', 'managing_director'), validateBody(writeOffSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await writeOffLoan(actor, loanIdParam(request), input, requestMeta(request));
@@ -199,15 +199,15 @@ loansRouter.post('/:id/write-off', authenticate, requireRole('president'), valid
 });
 // POST /api/v1/loans/:id/transfer — move the loan to another branch; recorded
 // as a refinance restructure (spec §12.3).
-loansRouter.post('/:id/transfer', authenticate, requireRole('president'), validateBody(transferSchema), async (request, response) => {
+loansRouter.post('/:id/transfer', authenticate, requireRole('president', 'vice_president', 'managing_director'), validateBody(transferSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await transferLoan(actor, loanIdParam(request), input, requestMeta(request));
     response.status(200).json(result);
 });
 // POST /api/v1/loans/:id/waiver — waive a specific unpaid instalment or a
-// capped amount of the outstanding balance (President).
-loansRouter.post('/:id/waiver', authenticate, requireRole('president'), validateBody(waiverSchema), async (request, response) => {
+// capped amount of the outstanding balance (President, VP, M.D.).
+loansRouter.post('/:id/waiver', authenticate, requireRole('president', 'vice_president', 'managing_director'), validateBody(waiverSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await grantWaiver(actor, loanIdParam(request), input, requestMeta(request));
@@ -215,7 +215,7 @@ loansRouter.post('/:id/waiver', authenticate, requireRole('president'), validate
 });
 // POST /api/v1/loans/:id/surplus-release — release the held surplus once the
 // loan is completed (spec §12.3, §12.5.4).
-loansRouter.post('/:id/surplus-release', authenticate, requireRole('president'), validateBody(surplusReleaseSchema), async (request, response) => {
+loansRouter.post('/:id/surplus-release', authenticate, requireRole('president', 'vice_president', 'managing_director'), validateBody(surplusReleaseSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await releaseSurplus(actor, loanIdParam(request), input, requestMeta(request));

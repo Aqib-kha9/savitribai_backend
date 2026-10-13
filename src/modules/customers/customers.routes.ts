@@ -199,8 +199,8 @@ customersRouter.patch('/:id', authenticate, requirePermission('customers.write')
   response.status(200).json(customer);
 });
 
-// POST /api/v1/customers/:id/status — change customer status (M.D. only).
-customersRouter.post('/:id/status', authenticate, requireRole('managing_director'), validateBody(changeStatusSchema), async (request, response) => {
+// POST /api/v1/customers/:id/status — change customer status (authorized officers).
+customersRouter.post('/:id/status', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(changeStatusSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as ChangeStatusInput;
   const customer = await changeCustomerStatus(actor, idParam(request), input, requestMeta(request));
@@ -208,8 +208,8 @@ customersRouter.post('/:id/status', authenticate, requireRole('managing_director
 });
 
 // POST /api/v1/customers/:id/transfer — branch transfer (Manager approves;
-// spec §8.1 / §8.3). Managing Director is allowed as the senior authority.
-customersRouter.post('/:id/transfer', authenticate, requireRole('manager', 'managing_director'), validateBody(transferCustomerSchema), async (request, response) => {
+// spec §8.1 / §8.3). Managing Director, President and Vice President allowed.
+customersRouter.post('/:id/transfer', authenticate, requireRole('manager', 'managing_director', 'president', 'vice_president'), validateBody(transferCustomerSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as TransferCustomerInput;
   const customer = await transferCustomer(actor, idParam(request), input, requestMeta(request));
@@ -217,8 +217,8 @@ customersRouter.post('/:id/transfer', authenticate, requireRole('manager', 'mana
 });
 
 // POST /api/v1/customers/:id/kyc/approve — approve/reject a customer's KYC
-// (Manager, or the M.D. as senior authority).
-customersRouter.post('/:id/kyc/approve', authenticate, requireRole('manager', 'managing_director'), validateBody(kycApproveSchema), async (request, response) => {
+// (Manager, M.D., Vice President, President, Super Admin).
+customersRouter.post('/:id/kyc/approve', authenticate, requireRole('manager', 'managing_director', 'vice_president', 'president', 'super_admin'), validateBody(kycApproveSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as KycApproveInput;
   const customer = await approveKyc(actor, idParam(request), input, requestMeta(request));
@@ -265,10 +265,10 @@ customersRouter.post('/:id/complaints', authenticate, requirePermission('custome
   response.status(201).json(complaint);
 });
 
-// POST /api/v1/customers/:id/merge — duplicate-profile merge (M.D. only).
+// POST /api/v1/customers/:id/merge — duplicate-profile merge (M.D. / President).
 // The source customer is closed and linked to the surviving profile; its data
 // is never hard-deleted (spec §8.1).
-customersRouter.post('/:id/merge', authenticate, requireRole('managing_director'), validateBody(mergeSchema), async (request, response) => {
+customersRouter.post('/:id/merge', authenticate, requireRole('president', 'managing_director'), validateBody(mergeSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as MergeInput;
   const customer = await mergeCustomers(actor, idParam(request), input, requestMeta(request));
@@ -276,8 +276,8 @@ customersRouter.post('/:id/merge', authenticate, requireRole('managing_director'
 });
 
 // POST /api/v1/customers/:id/death-notification — report the death of a
-// customer (M.D. only). Moves the profile to status 'deceased'.
-customersRouter.post('/:id/death-notification', authenticate, requireRole('managing_director'), validateBody(deathNotificationSchema), async (request, response) => {
+// customer (M.D. / President). Moves the profile to status 'deceased'.
+customersRouter.post('/:id/death-notification', authenticate, requireRole('president', 'managing_director'), validateBody(deathNotificationSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as DeathNotificationInput;
   const customer = await deathNotification(actor, idParam(request), input, requestMeta(request));
@@ -341,13 +341,13 @@ customersRouter.get(
   },
 );
 
-// PATCH /api/v1/customers/:id/data-subject-requests/:requestId — M.D. decision
+// PATCH /api/v1/customers/:id/data-subject-requests/:requestId — M.D. / President decision
 // (spec §24.1 external reporting contact). Completing a deletion moves the
 // profile to soft 'deleted'; a restriction request to 'restricted'.
 customersRouter.patch(
   '/:id/data-subject-requests/:requestId',
   authenticate,
-  requireRole('managing_director'),
+  requireRole('president', 'managing_director'),
   validateBody(decideDataSubjectRequestSchema),
   async (request, response) => {
     const actor = authOf(request);

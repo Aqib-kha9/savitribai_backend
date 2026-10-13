@@ -63,7 +63,7 @@ export const auditRouter = Router();
 auditRouter.get(
   '/events',
   authenticate,
-  requireRole('managing_director'),
+  requireRole('managing_director', 'president', 'vice_president'),
   requirePermission('security.audit.read'),
   async (request, response) => {
     const actor = authOf(request);
@@ -77,7 +77,7 @@ auditRouter.get(
 auditRouter.get(
   '/summary',
   authenticate,
-  requireRole('managing_director'),
+  requireRole('managing_director', 'president', 'vice_president'),
   requirePermission('security.audit.read'),
   async (request, response) => {
     const actor = authOf(request);

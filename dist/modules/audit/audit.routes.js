@@ -45,14 +45,14 @@ export const auditRouter = Router();
 // Audit trail queries (managing_director + security.audit.read)
 // ---------------------------------------------------------------------------
 // GET /api/v1/audit/events — filtered, paginated audit trail, newest first.
-auditRouter.get('/events', authenticate, requireRole('managing_director'), requirePermission('security.audit.read'), async (request, response) => {
+auditRouter.get('/events', authenticate, requireRole('managing_director', 'president', 'vice_president'), requirePermission('security.audit.read'), async (request, response) => {
     const actor = authOf(request);
     const query = parse(auditEventsQuerySchema, request.query);
     const result = await listAuditEvents(actor, query, requestMeta(request));
     response.status(200).json(result);
 });
 // GET /api/v1/audit/summary — counts by action and by acting staff + total.
-auditRouter.get('/summary', authenticate, requireRole('managing_director'), requirePermission('security.audit.read'), async (request, response) => {
+auditRouter.get('/summary', authenticate, requireRole('managing_director', 'president', 'vice_president'), requirePermission('security.audit.read'), async (request, response) => {
     const actor = authOf(request);
     const query = parse(auditSummaryQuerySchema, request.query);
     const result = await getAuditSummary(actor, query, requestMeta(request));

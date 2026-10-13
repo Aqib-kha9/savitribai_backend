@@ -59,9 +59,9 @@ rdRouter.get('/schemes', authenticate, requirePermission('deposits.read'), async
     const result = await listSchemes(actor, query, requestMeta(request));
     response.status(200).json(result);
 });
-// POST /api/v1/rd/schemes — define an RD scheme (M.D. only). Scheme defines
+// POST /api/v1/rd/schemes — define an RD scheme (M.D. / President). Scheme defines
 // frequency, instalment limits, term, interest, penalty configuration.
-rdRouter.post('/schemes', authenticate, requireRole('managing_director'), validateBody(createSchemeSchema), async (request, response) => {
+rdRouter.post('/schemes', authenticate, requireRole('president', 'managing_director'), validateBody(createSchemeSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const scheme = await createScheme(actor, input, requestMeta(request));
@@ -77,10 +77,10 @@ rdRouter.get('/accounts', authenticate, requirePermission('deposits.read'), asyn
     const result = await listAccounts(actor, query, requestMeta(request));
     response.status(200).json(result);
 });
-// POST /api/v1/rd/accounts — open an RD account (M.D. only). Frequency is
+// POST /api/v1/rd/accounts — open an RD account. Frequency is
 // daily/weekly/monthly/quarterly per scheme (spec §10.1). The account starts
 // in 'pending_approval' and must be approved before it becomes active.
-rdRouter.post('/accounts', authenticate, requireRole('managing_director'), validateBody(createAccountSchema), async (request, response) => {
+rdRouter.post('/accounts', authenticate, requireRole('managing_director', 'manager', 'cashier', 'clerk'), validateBody(createAccountSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const account = await openAccount(actor, input, requestMeta(request));
@@ -114,17 +114,17 @@ rdRouter.get('/accounts/:id/schedule', authenticate, requirePermission('deposits
     response.status(200).json(schedule);
 });
 // POST /api/v1/rd/accounts/:id/penalty-waiver — waive a late/missed penalty
-// (President only — spec §10.3, §5.2).
-rdRouter.post('/accounts/:id/penalty-waiver', authenticate, requireRole('president'), validateBody(penaltyWaiverSchema), async (request, response) => {
+// (President or M.D. — spec §10.3, §5.2).
+rdRouter.post('/accounts/:id/penalty-waiver', authenticate, requireRole('president', 'managing_director'), validateBody(penaltyWaiverSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await waivePenalty(actor, accountIdParam(request), input, requestMeta(request));
     response.status(200).json(result);
 });
 // POST /api/v1/rd/accounts/:id/reschedule — due-date / instalment-amount /
-// both schedule change (President only — spec §10.1 due-date changes and
+// both schedule change (President or M.D. — spec §10.1 due-date changes and
 // §10.3 reschedule). Persists rd_schedule_change history.
-rdRouter.post('/accounts/:id/reschedule', authenticate, requireRole('president'), validateBody(rescheduleSchema), async (request, response) => {
+rdRouter.post('/accounts/:id/reschedule', authenticate, requireRole('president', 'managing_director'), validateBody(rescheduleSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await rescheduleAccount(actor, accountIdParam(request), input, requestMeta(request));
@@ -132,7 +132,7 @@ rdRouter.post('/accounts/:id/reschedule', authenticate, requireRole('president')
 });
 // POST /api/v1/rd/accounts/:id/close-early — close before maturity; a 4%
 // early-closure fee is applied (spec §10.1).
-rdRouter.post('/accounts/:id/close-early', authenticate, requireRole('managing_director'), validateBody(closeEarlySchema), async (request, response) => {
+rdRouter.post('/accounts/:id/close-early', authenticate, requireRole('president', 'managing_director'), validateBody(closeEarlySchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await closeEarlyAccount(actor, accountIdParam(request), input, requestMeta(request));
@@ -141,7 +141,7 @@ rdRouter.post('/accounts/:id/close-early', authenticate, requireRole('managing_d
 // POST /api/v1/rd/accounts/:id/surplus-transfer — move excess over the
 // expected amount into the member's linked loan account; released only when
 // the loan completes (spec §10.1 follow-up rule).
-rdRouter.post('/accounts/:id/surplus-transfer', authenticate, requireRole('managing_director'), validateBody(surplusTransferSchema), async (request, response) => {
+rdRouter.post('/accounts/:id/surplus-transfer', authenticate, requireRole('president', 'managing_director'), validateBody(surplusTransferSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await surplusTransfer(actor, accountIdParam(request), input, requestMeta(request));
@@ -149,8 +149,8 @@ rdRouter.post('/accounts/:id/surplus-transfer', authenticate, requireRole('manag
 });
 // POST /api/v1/rd/accounts/:id/approvals — second reviewer / designated
 // person approval: account opening and fund-transfer / approved-fund-waiting
-// actions (spec §10.3). President or M.D.
-rdRouter.post('/accounts/:id/approvals', authenticate, requireRole('president', 'managing_director'), validateBody(approvalSchema), async (request, response) => {
+// actions (spec §10.3). President, VP or M.D.
+rdRouter.post('/accounts/:id/approvals', authenticate, requireRole('president', 'vice_president', 'managing_director'), validateBody(approvalSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const account = await approveAccount(actor, accountIdParam(request), input, requestMeta(request));

@@ -98,10 +98,10 @@ fdRouter.get('/rate-card', authenticate, requirePermission('deposits.read'), asy
   response.status(200).json(result);
 });
 
-// POST /api/v1/fd/rate-card — define an FD rate card (M.D. only). Each card
+// POST /api/v1/fd/rate-card — define an FD rate card (M.D. / President). Each card
 // scopes an interest rate / early-closure penalty to an amount band + tenure;
 // overlapping live cards are rejected.
-fdRouter.post('/rate-card', authenticate, requireRole('managing_director'), validateBody(createRateCardSchema), async (request, response) => {
+fdRouter.post('/rate-card', authenticate, requireRole('president', 'managing_director'), validateBody(createRateCardSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as CreateRateCardInput;
   const rateCard = await createRateCard(actor, input, requestMeta(request));
@@ -120,14 +120,20 @@ fdRouter.get('/accounts', authenticate, requirePermission('deposits.read'), asyn
   response.status(200).json(result);
 });
 
-// POST /api/v1/fd/accounts — open an FD account (M.D. only). Deposit must fall
+// POST /api/v1/fd/accounts — open an FD account. Deposit must fall
 // inside the rate card's amount band with an exact tenure match (spec §11.1).
-fdRouter.post('/accounts', authenticate, requireRole('managing_director'), validateBody(createAccountSchema), async (request, response) => {
-  const actor = authOf(request);
-  const input = request.body as CreateAccountInput;
-  const account = await openAccount(actor, input, requestMeta(request));
-  response.status(201).json(account);
-});
+fdRouter.post(
+  '/accounts',
+  authenticate,
+  requireRole('managing_director', 'manager', 'cashier', 'clerk'),
+  validateBody(createAccountSchema),
+  async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body as CreateAccountInput;
+    const account = await openAccount(actor, input, requestMeta(request));
+    response.status(201).json(account);
+  },
+);
 
 // GET /api/v1/fd/accounts/:id — full FD account detail (incl. rate-card band).
 fdRouter.get('/accounts/:id', authenticate, requirePermission('deposits.read'), async (request, response) => {
@@ -136,13 +142,13 @@ fdRouter.get('/accounts/:id', authenticate, requirePermission('deposits.read'), 
   response.status(200).json(account);
 });
 
-// PATCH /api/v1/fd/accounts/:id — edit the live terms of an FD account
-// (M.D. only). Only the rate card / interest rate / fixed-rate flag and the
+// PATCH /api/v1/fd/accounts/:id — edit the live terms of an FD account.
+// Only the rate card / interest rate / fixed-rate flag and the
 // interest-disposition instructions are editable.
 fdRouter.patch(
   '/accounts/:id',
   authenticate,
-  requireRole('managing_director'),
+  requireRole('managing_director', 'manager', 'cashier', 'clerk'),
   validateBody(updateAccountSchema),
   async (request, response) => {
     const actor = authOf(request);
@@ -165,12 +171,12 @@ fdRouter.get('/accounts/:id/history', authenticate, requirePermission('deposits.
 // Account lifecycle actions
 // ---------------------------------------------------------------------------
 
-// POST /api/v1/fd/accounts/:id/lien — request or release a lien (M.D. only).
+// POST /api/v1/fd/accounts/:id/lien — request or release a lien (M.D. / President).
 // A liened account is not settleable / closeable / renewable until released.
 fdRouter.post(
   '/accounts/:id/lien',
   authenticate,
-  requireRole('managing_director'),
+  requireRole('president', 'managing_director'),
   validateBody(lienSchema),
   async (request, response) => {
     const actor = authOf(request);
@@ -180,13 +186,13 @@ fdRouter.post(
   },
 );
 
-// POST /api/v1/fd/accounts/:id/close-early — close before maturity (M.D.
-// only); a penalty applies when closure falls inside the rate card's minimum
+// POST /api/v1/fd/accounts/:id/close-early — close before maturity;
+// a penalty applies when closure falls inside the rate card's minimum
 // holding window (spec §11.1).
 fdRouter.post(
   '/accounts/:id/close-early',
   authenticate,
-  requireRole('managing_director'),
+  requireRole('managing_director', 'manager', 'cashier', 'clerk'),
   validateBody(closeEarlySchema),
   async (request, response) => {
     const actor = authOf(request);
@@ -196,13 +202,13 @@ fdRouter.post(
   },
 );
 
-// POST /api/v1/fd/accounts/:id/maturity-action — settle a matured FD (M.D.
-// only): renew principal + interest / renew principal / transfer to savings /
+// POST /api/v1/fd/accounts/:id/maturity-action — settle a matured FD:
+// renew principal + interest / renew principal / transfer to savings /
 // pay cash / pay bank. Interest is simple interest over the term.
 fdRouter.post(
   '/accounts/:id/maturity-action',
   authenticate,
-  requireRole('managing_director'),
+  requireRole('managing_director', 'manager', 'cashier', 'clerk'),
   validateBody(maturityActionSchema),
   async (request, response) => {
     const actor = authOf(request);
@@ -213,11 +219,11 @@ fdRouter.post(
 );
 
 // POST /api/v1/fd/accounts/:id/loan — disburse an immediate loan secured
-// against the FD (M.D. only), capped at 85% of the deposit (spec §11.1).
+// against the FD (M.D. / President), capped at 85% of the deposit (spec §11.1).
 fdRouter.post(
   '/accounts/:id/loan',
   authenticate,
-  requireRole('managing_director'),
+  requireRole('president', 'managing_director'),
   validateBody(loanAgainstFdSchema),
   async (request, response) => {
     const actor = authOf(request);

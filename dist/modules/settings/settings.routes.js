@@ -63,7 +63,8 @@ settingsRouter.patch('/organisation', authenticate, requirePermission('settings.
 // Branches (settings.read to view, settings.write to mutate)
 // ---------------------------------------------------------------------------
 // GET /api/v1/settings/branches — paginated branch registry.
-settingsRouter.get('/branches', authenticate, requirePermission('settings.read'), async (request, response) => {
+// Accessible to any authenticated staff member (e.g. branch dropdowns in forms).
+settingsRouter.get('/branches', authenticate, async (request, response) => {
     const actor = authOf(request);
     const query = parse(listBranchesQuerySchema, request.query);
     const result = await listBranches(actor, query, requestMeta(request));

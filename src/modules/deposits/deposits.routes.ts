@@ -108,8 +108,8 @@ depositsRouter.get('/products', authenticate, requirePermission('deposits.read')
   response.status(200).json(result);
 });
 
-// POST /api/v1/deposits/products — define a deposit product (M.D. only).
-depositsRouter.post('/products', authenticate, requireRole('managing_director'), validateBody(createProductSchema), async (request, response) => {
+// POST /api/v1/deposits/products — define a deposit product (M.D. / President).
+depositsRouter.post('/products', authenticate, requireRole('president', 'managing_director'), validateBody(createProductSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as CreateProductInput;
   const product = await createProduct(actor, input, requestMeta(request));
@@ -128,15 +128,21 @@ depositsRouter.get('/accounts', authenticate, requirePermission('deposits.read')
   response.status(200).json(result);
 });
 
-// POST /api/v1/deposits/accounts — open a savings account (M.D. only). The
-// account starts in 'pending_approval' and must be approved before it becomes
-// active (spec §9.1 — opening approved by the designated person).
-depositsRouter.post('/accounts', authenticate, requireRole('managing_director'), validateBody(createAccountSchema), async (request, response) => {
-  const actor = authOf(request);
-  const input = request.body as CreateAccountInput;
-  const account = await createAccount(actor, input, requestMeta(request));
-  response.status(201).json(account);
-});
+// POST /api/v1/deposits/accounts — open a savings account. The account
+// starts in 'pending_approval' and must be approved before it becomes active
+// (spec §9.1 maker-checker — frontline staff can submit; executives approve).
+depositsRouter.post(
+  '/accounts',
+  authenticate,
+  requireRole('managing_director', 'manager', 'cashier', 'clerk'),
+  validateBody(createAccountSchema),
+  async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body as CreateAccountInput;
+    const account = await createAccount(actor, input, requestMeta(request));
+    response.status(201).json(account);
+  },
+);
 
 // GET /api/v1/deposits/accounts/:id — full account detail.
 depositsRouter.get('/accounts/:id', authenticate, requirePermission('deposits.read'), async (request, response) => {
@@ -145,27 +151,32 @@ depositsRouter.get('/accounts/:id', authenticate, requirePermission('deposits.re
   response.status(200).json(account);
 });
 
-// PATCH /api/v1/deposits/accounts/:id — edit account terms (M.D. only):
-// product change or a variable interest-rate change (spec §9.1).
-depositsRouter.patch('/accounts/:id', authenticate, requireRole('managing_director'), validateBody(updateAccountSchema), async (request, response) => {
-  const actor = authOf(request);
-  const input = request.body as UpdateAccountInput;
-  const account = await updateAccount(actor, idParam(request), input, requestMeta(request));
-  response.status(200).json(account);
-});
+// PATCH /api/v1/deposits/accounts/:id — edit account terms (spec §9.1).
+depositsRouter.patch(
+  '/accounts/:id',
+  authenticate,
+  requireRole('managing_director', 'manager', 'cashier', 'clerk'),
+  validateBody(updateAccountSchema),
+  async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body as UpdateAccountInput;
+    const account = await updateAccount(actor, idParam(request), input, requestMeta(request));
+    response.status(200).json(account);
+  },
+);
 
-// POST /api/v1/deposits/accounts/:id/freeze — freeze an account (M.D. only).
-depositsRouter.post('/accounts/:id/freeze', authenticate, requireRole('managing_director'), validateBody(freezeAccountSchema), async (request, response) => {
+// POST /api/v1/deposits/accounts/:id/freeze — freeze an account (M.D. / President).
+depositsRouter.post('/accounts/:id/freeze', authenticate, requireRole('president', 'managing_director'), validateBody(freezeAccountSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as FreezeAccountInput;
   const account = await freezeAccount(actor, idParam(request), input, requestMeta(request));
   response.status(200).json(account);
 });
 
-// POST /api/v1/deposits/accounts/:id/close — close an account (M.D. only).
+// POST /api/v1/deposits/accounts/:id/close — close an account (M.D. / President).
 // Balance must be zero (spec §9.1); closure is approved by the designated
 // person on a separate approval flow in the corrections module (spec §19).
-depositsRouter.post('/accounts/:id/close', authenticate, requireRole('managing_director'), validateBody(closeAccountSchema), async (request, response) => {
+depositsRouter.post('/accounts/:id/close', authenticate, requireRole('president', 'managing_director'), validateBody(closeAccountSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as CloseAccountInput;
   const account = await closeAccount(actor, idParam(request), input, requestMeta(request));
@@ -173,8 +184,8 @@ depositsRouter.post('/accounts/:id/close', authenticate, requireRole('managing_d
 });
 
 // POST /api/v1/deposits/accounts/:id/reopen — reopen a frozen or closed
-// account (M.D. only).
-depositsRouter.post('/accounts/:id/reopen', authenticate, requireRole('managing_director'), validateBody(reopenAccountSchema), async (request, response) => {
+// account (M.D. / President).
+depositsRouter.post('/accounts/:id/reopen', authenticate, requireRole('president', 'managing_director'), validateBody(reopenAccountSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as ReopenAccountInput;
   const account = await reopenAccount(actor, idParam(request), input, requestMeta(request));
@@ -182,13 +193,19 @@ depositsRouter.post('/accounts/:id/reopen', authenticate, requireRole('managing_
 });
 
 // POST /api/v1/deposits/accounts/:id/approve — second reviewer / designated
-// person approval for an account opening (spec §9.1). President or M.D.
-depositsRouter.post('/accounts/:id/approve', authenticate, requireRole('president', 'managing_director'), validateBody(approveAccountSchema), async (request, response) => {
-  const actor = authOf(request);
-  const input = request.body as ApproveAccountInput;
-  const account = await approveAccount(actor, idParam(request), input, requestMeta(request));
-  response.status(200).json(account);
-});
+// person approval for an account opening (spec §9.1). President, VP or M.D.
+depositsRouter.post(
+  '/accounts/:id/approve',
+  authenticate,
+  requireRole('president', 'vice_president', 'managing_director'),
+  validateBody(approveAccountSchema),
+  async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body as ApproveAccountInput;
+    const account = await approveAccount(actor, idParam(request), input, requestMeta(request));
+    response.status(200).json(account);
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Ledger transactions
@@ -217,9 +234,9 @@ depositsRouter.post('/accounts/:id/transactions', authenticate, requirePermissio
 // ---------------------------------------------------------------------------
 
 // POST /api/v1/deposits/accounts/:id/adjustments — create a compensating
-// adjustment entry (M.D. only). The original ledger row is never modified; a
+// adjustment entry (M.D. / President). The original ledger row is never modified; a
 // fresh entry is appended and linked through account_adjustment (spec §9.1).
-depositsRouter.post('/accounts/:id/adjustments', authenticate, requireRole('managing_director'), validateBody(createAdjustmentSchema), async (request, response) => {
+depositsRouter.post('/accounts/:id/adjustments', authenticate, requireRole('president', 'managing_director'), validateBody(createAdjustmentSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as CreateAdjustmentInput;
   const adjustment = await createAdjustment(actor, idParam(request), input, requestMeta(request));

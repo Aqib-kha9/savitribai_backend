@@ -105,9 +105,9 @@ rdRouter.get('/schemes', authenticate, requirePermission('deposits.read'), async
   response.status(200).json(result);
 });
 
-// POST /api/v1/rd/schemes — define an RD scheme (M.D. only). Scheme defines
+// POST /api/v1/rd/schemes — define an RD scheme (M.D. / President). Scheme defines
 // frequency, instalment limits, term, interest, penalty configuration.
-rdRouter.post('/schemes', authenticate, requireRole('managing_director'), validateBody(createSchemeSchema), async (request, response) => {
+rdRouter.post('/schemes', authenticate, requireRole('president', 'managing_director'), validateBody(createSchemeSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as CreateSchemeInput;
   const scheme = await createScheme(actor, input, requestMeta(request));
@@ -126,15 +126,21 @@ rdRouter.get('/accounts', authenticate, requirePermission('deposits.read'), asyn
   response.status(200).json(result);
 });
 
-// POST /api/v1/rd/accounts — open an RD account (M.D. only). Frequency is
+// POST /api/v1/rd/accounts — open an RD account. Frequency is
 // daily/weekly/monthly/quarterly per scheme (spec §10.1). The account starts
 // in 'pending_approval' and must be approved before it becomes active.
-rdRouter.post('/accounts', authenticate, requireRole('managing_director'), validateBody(createAccountSchema), async (request, response) => {
-  const actor = authOf(request);
-  const input = request.body as CreateAccountInput;
-  const account = await openAccount(actor, input, requestMeta(request));
-  response.status(201).json(account);
-});
+rdRouter.post(
+  '/accounts',
+  authenticate,
+  requireRole('managing_director', 'manager', 'cashier', 'clerk'),
+  validateBody(createAccountSchema),
+  async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body as CreateAccountInput;
+    const account = await openAccount(actor, input, requestMeta(request));
+    response.status(201).json(account);
+  },
+);
 
 // GET /api/v1/rd/accounts/:id — full RD account detail.
 rdRouter.get('/accounts/:id', authenticate, requirePermission('deposits.read'), async (request, response) => {
@@ -174,11 +180,11 @@ rdRouter.get('/accounts/:id/schedule', authenticate, requirePermission('deposits
 });
 
 // POST /api/v1/rd/accounts/:id/penalty-waiver — waive a late/missed penalty
-// (President only — spec §10.3, §5.2).
+// (President or M.D. — spec §10.3, §5.2).
 rdRouter.post(
   '/accounts/:id/penalty-waiver',
   authenticate,
-  requireRole('president'),
+  requireRole('president', 'managing_director'),
   validateBody(penaltyWaiverSchema),
   async (request, response) => {
     const actor = authOf(request);
@@ -189,12 +195,12 @@ rdRouter.post(
 );
 
 // POST /api/v1/rd/accounts/:id/reschedule — due-date / instalment-amount /
-// both schedule change (President only — spec §10.1 due-date changes and
+// both schedule change (President or M.D. — spec §10.1 due-date changes and
 // §10.3 reschedule). Persists rd_schedule_change history.
 rdRouter.post(
   '/accounts/:id/reschedule',
   authenticate,
-  requireRole('president'),
+  requireRole('president', 'managing_director'),
   validateBody(rescheduleSchema),
   async (request, response) => {
     const actor = authOf(request);
@@ -209,7 +215,7 @@ rdRouter.post(
 rdRouter.post(
   '/accounts/:id/close-early',
   authenticate,
-  requireRole('managing_director'),
+  requireRole('president', 'managing_director'),
   validateBody(closeEarlySchema),
   async (request, response) => {
     const actor = authOf(request);
@@ -225,7 +231,7 @@ rdRouter.post(
 rdRouter.post(
   '/accounts/:id/surplus-transfer',
   authenticate,
-  requireRole('managing_director'),
+  requireRole('president', 'managing_director'),
   validateBody(surplusTransferSchema),
   async (request, response) => {
     const actor = authOf(request);
@@ -237,11 +243,11 @@ rdRouter.post(
 
 // POST /api/v1/rd/accounts/:id/approvals — second reviewer / designated
 // person approval: account opening and fund-transfer / approved-fund-waiting
-// actions (spec §10.3). President or M.D.
+// actions (spec §10.3). President, VP or M.D.
 rdRouter.post(
   '/accounts/:id/approvals',
   authenticate,
-  requireRole('president', 'managing_director'),
+  requireRole('president', 'vice_president', 'managing_director'),
   validateBody(approvalSchema),
   async (request, response) => {
     const actor = authOf(request);

@@ -119,44 +119,44 @@ collectionsRouter.get('/reports/collection-totals', authenticate, requirePermiss
 // ---------------------------------------------------------------------------
 // Managing-director office actions
 // ---------------------------------------------------------------------------
-// POST /api/v1/collections/emergency-approval — M.D. approves a collection from
+// POST /api/v1/collections/emergency-approval — approves a collection from
 // an unassigned customer; the entry is created directly in 'accepted' state
 // (§14.1). Literal path registered BEFORE /:id routes.
-collectionsRouter.post('/emergency-approval', authenticate, requireRole('managing_director'), validateBody(emergencyApprovalSchema), async (request, response) => {
+collectionsRouter.post('/emergency-approval', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(emergencyApprovalSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const collection = await approveEmergencyCollection(actor, input, requestMeta(request));
     response.status(201).json(collection);
 });
-// POST /api/v1/collections/:id/review — M.D. accepts / rejects / escalates a
+// POST /api/v1/collections/:id/review — accepts / rejects / escalates a
 // waiting submission (spec §14.5).
-collectionsRouter.post('/:id/review', authenticate, requireRole('managing_director'), validateBody(reviewCollectionSchema), async (request, response) => {
+collectionsRouter.post('/:id/review', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(reviewCollectionSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const collection = await reviewCollection(actor, idParam(request), input, requestMeta(request));
     response.status(200).json(collection);
 });
-// POST /api/v1/collections/:id/reverse — M.D. reverses a disputed collection
+// POST /api/v1/collections/:id/reverse — reverses a disputed collection
 // (reversal + corrected replacement entry, never a direct edit — spec §14.5).
-collectionsRouter.post('/:id/reverse', authenticate, requireRole('managing_director'), validateBody(reverseCollectionSchema), async (request, response) => {
+collectionsRouter.post('/:id/reverse', authenticate, requireRole('managing_director', 'president'), validateBody(reverseCollectionSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const reversal = await reverseCollection(actor, idParam(request), input, requestMeta(request));
     response.status(200).json(reversal);
 });
-// POST /api/v1/collections/:id/delete-duplicate — M.D. or manager soft-deletes
+// POST /api/v1/collections/:id/delete-duplicate — soft-deletes
 // a duplicate entry (is_deleted=true); accepted collections must instead be
 // reversed. Only the entry is deleted — its receipt is never removed.
-collectionsRouter.post('/:id/delete-duplicate', authenticate, requireRole('managing_director', 'manager'), validateBody(deleteDuplicateSchema), async (request, response) => {
+collectionsRouter.post('/:id/delete-duplicate', authenticate, requireRole('managing_director', 'manager', 'president'), validateBody(deleteDuplicateSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const collection = await deleteDuplicateCollection(actor, idParam(request), input, requestMeta(request));
     response.status(200).json(collection);
 });
-// POST /api/v1/collections/:id/allocate — M.D. decides how a short-paid
+// POST /api/v1/collections/:id/allocate — decides how a short-paid
 // collection is allocated across principal / interest / penalty / fees buckets
 // (§14.1).
-collectionsRouter.post('/:id/allocate', authenticate, requireRole('managing_director'), validateBody(allocateCollectionSchema), async (request, response) => {
+collectionsRouter.post('/:id/allocate', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(allocateCollectionSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const collection = await allocateShortPayment(actor, idParam(request), input, requestMeta(request));

@@ -118,10 +118,10 @@ settingsRouter.patch(
 // ---------------------------------------------------------------------------
 
 // GET /api/v1/settings/branches — paginated branch registry.
+// Accessible to any authenticated staff member (e.g. branch dropdowns in forms).
 settingsRouter.get(
   '/branches',
   authenticate,
-  requirePermission('settings.read'),
   async (request, response) => {
     const actor = authOf(request);
     const query = parse(listBranchesQuerySchema, request.query) as ListBranchesQuery;
