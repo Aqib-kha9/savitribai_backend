@@ -172,6 +172,7 @@ export const ROLE_PERMISSIONS: Record<StaffRole, Permission[]> = {
     'reconciliation.read',
     'reconciliation.write',
     'reports.read',
+    'agents.read',
   ],
   clerk: [
     'customers.read',
@@ -183,9 +184,11 @@ export const ROLE_PERMISSIONS: Record<StaffRole, Permission[]> = {
     'withdrawals.create',
     'collections.read',
     'reports.read',
+    'agents.read',
   ],
   collection_agent: ['customers.read', 'collections.read', 'collections.write', 'reconciliation.read'],
 };
+
 
 /** Client rule: withdrawals above ₹2,00,000 require President approval. */
 export const HIGH_VALUE_WITHDRAWAL_LIMIT = 200000;

@@ -244,12 +244,19 @@ agentsRouter.post('/:id/deactivate', authenticate, requireRole('managing_directo
 // ---------------------------------------------------------------------------
 
 // POST /api/v1/agents/:id/assignments — assign (or re-assign) customers.
-agentsRouter.post('/:id/assignments', authenticate, requireRole('managing_director', 'manager'), validateBody(assignmentSchema), async (request, response) => {
-  const actor = authOf(request);
-  const input = request.body as AssignmentInput;
-  const result = await assignCustomers(actor, idParam(request), input, requestMeta(request));
-  response.status(200).json(result);
-});
+agentsRouter.post(
+  '/:id/assignments',
+  authenticate,
+  requireRole('managing_director', 'manager', 'cashier', 'clerk', 'president', 'vice_president'),
+  validateBody(assignmentSchema),
+  async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body as AssignmentInput;
+    const result = await assignCustomers(actor, idParam(request), input, requestMeta(request));
+    response.status(200).json(result);
+  },
+);
+
 
 // POST /api/v1/agents/:id/route-exchange — M.D. approves a route exchange that
 // transfers the agent's customers (and optionally route) to another agent.

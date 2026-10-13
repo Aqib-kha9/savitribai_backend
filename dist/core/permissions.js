@@ -129,6 +129,7 @@ export const ROLE_PERMISSIONS = {
         'reconciliation.read',
         'reconciliation.write',
         'reports.read',
+        'agents.read',
     ],
     clerk: [
         'customers.read',
@@ -140,6 +141,7 @@ export const ROLE_PERMISSIONS = {
         'withdrawals.create',
         'collections.read',
         'reports.read',
+        'agents.read',
     ],
     collection_agent: ['customers.read', 'collections.read', 'collections.write', 'reconciliation.read'],
 };
