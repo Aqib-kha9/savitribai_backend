@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authenticate, requirePermission, requireRole } from '../../middleware/auth.js';
 import { parse, validateBody } from '../../middleware/validate.js';
 import { UnauthorizedError } from '../../core/errors.js';
-import { listSchemes, createScheme, openAccount, listAccounts, getAccount, getSchedule, recordInstalmentPayment, waivePenalty, rescheduleAccount, closeEarlyAccount, surplusTransfer, approveAccount, } from './rd.service.js';
+import { listSchemes, createScheme, openAccount, listAccounts, getAccount, getSchedule, recordInstalmentPayment, waivePenalty, rescheduleAccount, closeEarlyAccount, cancelAccount, surplusTransfer, approveAccount, } from './rd.service.js';
 import { createSchemeSchema, listSchemesQuerySchema, createAccountSchema, listAccountsQuerySchema, instalmentPaymentSchema, scheduleQuerySchema, penaltyWaiverSchema, rescheduleSchema, closeEarlySchema, surplusTransferSchema, approvalSchema, idParamSchema, } from './rd.schemas.js';
 /**
  * Recurring deposits HTTP surface (docs/backend-master-spec.md §10).
@@ -132,10 +132,19 @@ rdRouter.post('/accounts/:id/reschedule', authenticate, requireRole('president',
 });
 // POST /api/v1/rd/accounts/:id/close-early — close before maturity; a 4%
 // early-closure fee is applied (spec §10.1).
-rdRouter.post('/accounts/:id/close-early', authenticate, requireRole('president', 'managing_director'), validateBody(closeEarlySchema), async (request, response) => {
+rdRouter.post('/accounts/:id/close-early', authenticate, requireRole('president', 'vice_president', 'managing_director', 'manager', 'super_admin'), validateBody(closeEarlySchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await closeEarlyAccount(actor, accountIdParam(request), input, requestMeta(request));
+    response.status(200).json(result);
+});
+// DELETE /api/v1/rd/accounts/:id — cancel/close an RD account and waive remaining dues
+rdRouter.delete('/accounts/:id', authenticate, requireRole('president', 'vice_president', 'managing_director', 'manager', 'super_admin'), async (request, response) => {
+    const actor = authOf(request);
+    const reason = (typeof request.body === 'object' && request.body && 'reason' in request.body && typeof request.body.reason === 'string')
+        ? request.body.reason
+        : (request.query.reason || 'RD account cancelled and removed from active portfolio');
+    const result = await cancelAccount(actor, accountIdParam(request), { reason }, requestMeta(request));
     response.status(200).json(result);
 });
 // POST /api/v1/rd/accounts/:id/surplus-transfer — move excess over the

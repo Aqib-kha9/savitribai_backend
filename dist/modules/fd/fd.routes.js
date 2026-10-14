@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authenticate, requirePermission, requireRole } from '../../middleware/auth.js';
 import { parse, validateBody } from '../../middleware/validate.js';
 import { UnauthorizedError } from '../../core/errors.js';
-import { listRateCards, createRateCard, openAccount, listAccounts, getAccount, updateAccount, getHistory, lien, closeEarly, maturityAction, loanAgainstFd, } from './fd.service.js';
+import { listRateCards, createRateCard, openAccount, listAccounts, getAccount, updateAccount, getHistory, lien, closeEarly, closeAccount, maturityAction, loanAgainstFd, } from './fd.service.js';
 import { createRateCardSchema, listRateCardsQuerySchema, createAccountSchema, listAccountsQuerySchema, updateAccountSchema, lienSchema, closeEarlySchema, maturityActionSchema, loanAgainstFdSchema, historyQuerySchema, idParamSchema, } from './fd.schemas.js';
 /**
  * Fixed deposits HTTP surface (docs/backend-master-spec.md §11).
@@ -119,10 +119,19 @@ fdRouter.post('/accounts/:id/lien', authenticate, requireRole('president', 'mana
 // POST /api/v1/fd/accounts/:id/close-early — close before maturity;
 // a penalty applies when closure falls inside the rate card's minimum
 // holding window (spec §11.1).
-fdRouter.post('/accounts/:id/close-early', authenticate, requireRole('managing_director', 'manager', 'cashier', 'clerk'), validateBody(closeEarlySchema), async (request, response) => {
+fdRouter.post('/accounts/:id/close-early', authenticate, requireRole('managing_director', 'manager', 'cashier', 'clerk', 'super_admin'), validateBody(closeEarlySchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const result = await closeEarly(actor, accountIdParam(request), input, requestMeta(request));
+    response.status(200).json(result);
+});
+// DELETE /api/v1/fd/accounts/:id — close/delete an FD account
+fdRouter.delete('/accounts/:id', authenticate, requireRole('president', 'vice_president', 'managing_director', 'manager', 'super_admin'), async (request, response) => {
+    const actor = authOf(request);
+    const reason = (typeof request.body === 'object' && request.body && 'reason' in request.body && typeof request.body.reason === 'string')
+        ? request.body.reason
+        : (request.query.reason || 'FD account closed and removed from active portfolio');
+    const result = await closeAccount(actor, accountIdParam(request), { reason }, requestMeta(request));
     response.status(200).json(result);
 });
 // POST /api/v1/fd/accounts/:id/maturity-action — settle a matured FD:

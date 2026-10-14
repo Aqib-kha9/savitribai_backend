@@ -14,6 +14,7 @@ import {
   getHistory,
   lien,
   closeEarly,
+  closeAccount,
   maturityAction,
   loanAgainstFd,
 } from './fd.service.js';
@@ -192,12 +193,27 @@ fdRouter.post(
 fdRouter.post(
   '/accounts/:id/close-early',
   authenticate,
-  requireRole('managing_director', 'manager', 'cashier', 'clerk'),
+  requireRole('managing_director', 'manager', 'cashier', 'clerk', 'super_admin'),
   validateBody(closeEarlySchema),
   async (request, response) => {
     const actor = authOf(request);
     const input = request.body as CloseEarlyInput;
     const result = await closeEarly(actor, accountIdParam(request), input, requestMeta(request));
+    response.status(200).json(result);
+  },
+);
+
+// DELETE /api/v1/fd/accounts/:id — close/delete an FD account
+fdRouter.delete(
+  '/accounts/:id',
+  authenticate,
+  requireRole('president', 'vice_president', 'managing_director', 'manager', 'super_admin'),
+  async (request, response) => {
+    const actor = authOf(request);
+    const reason = (typeof request.body === 'object' && request.body && 'reason' in request.body && typeof request.body.reason === 'string')
+      ? request.body.reason
+      : ((request.query.reason as string) || 'FD account closed and removed from active portfolio');
+    const result = await closeAccount(actor, accountIdParam(request), { reason }, requestMeta(request));
     response.status(200).json(result);
   },
 );

@@ -547,8 +547,12 @@ export async function listAccounts(actor, queryInput, meta = {}) {
     if (queryInput.branchId) {
         where.push(`sa.branch_id = ${addParam(queryInput.branchId)}`);
     }
+    where.push("c.status != 'deleted'");
     if (queryInput.status) {
         where.push(`sa.status = ${addParam(queryInput.status)}`);
+    }
+    else {
+        where.push("sa.status != 'closed'");
     }
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     const limit = queryInput.limit;
@@ -678,6 +682,51 @@ export async function closeAccount(actor, accountId, input, meta = {}) {
                 toStatus: 'closed',
                 reason: input.reason,
                 closedBy: actor.staffId,
+            },
+        });
+    });
+    return getAccount(actor, accountId, meta);
+}
+export async function deleteAccount(actor, accountId, input, meta = {}) {
+    await transaction(async (client) => {
+        const existing = await selectAccountById(client, accountId);
+        if (!existing)
+            throw new NotFoundError('Savings account');
+        const status = existing.status;
+        if (status === 'closed') {
+            return;
+        }
+        // Zero out any remaining balance with a compensating ledger withdrawal so DB remains balanced
+        if (!isZero(existing.current_balance)) {
+            await insertLedgerEntry(client, {
+                accountId,
+                accountNumber: existing.account_number,
+                transactionType: 'withdrawal',
+                direction: 'debit',
+                amount: existing.current_balance,
+                balanceAfter: '0.00',
+                valueDate: istBusinessDate(),
+                paymentMethod: 'cash',
+                description: `Account closure payout / clearance: ${input.reason}`,
+                actor,
+            });
+        }
+        await client.query(`UPDATE savings_account
+          SET status = 'closed', current_balance = '0.00', closed_on = $1, closure_reason = $2, updated_at = now()
+        WHERE id = $3`, [istBusinessDate(), input.reason, accountId]);
+        await audit(client, {
+            ...actorAuditBase(actor),
+            requestId: meta.requestId ?? null,
+            action: AUDIT_ACTIONS.SAVINGS_ACCOUNT_CLOSED,
+            entityType: 'savings_account',
+            entityId: accountId,
+            metadata: {
+                fromStatus: status,
+                toStatus: 'closed',
+                previousBalance: existing.current_balance,
+                reason: input.reason,
+                closedBy: actor.staffId,
+                deletion: true,
             },
         });
     });
@@ -851,8 +900,8 @@ async function insertLedgerEntry(client, entry) {
     const insert = await client.query(`INSERT INTO account_transaction
        (savings_account_id, transaction_type, direction, amount, balance_after,
         value_date, payment_method, reference_number, description,
-        performed_by, performed_source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        performed_by, performed_source, reversal_of)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING id`, [
         entry.accountId,
         entry.transactionType,
@@ -865,6 +914,7 @@ async function insertLedgerEntry(client, entry) {
         entry.description ?? null,
         entry.actor.staffId,
         entry.actor.source,
+        entry.reversalOf ?? null,
     ]);
     const row = insert.rows[0];
     if (!row)
@@ -967,6 +1017,7 @@ export async function createAdjustment(actor, accountId, input, meta = {}) {
             paymentMethod: 'cash',
             description: `${input.adjustmentType} of transaction ${original.id}`,
             actor,
+            reversalOf: original.id,
         });
         const adjustmentInsert = await client.query(`INSERT INTO account_adjustment
          (savings_account_id, adjustment_type, original_transaction_id,

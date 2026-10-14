@@ -942,6 +942,18 @@ async function applyStatusChange(client, actor, customerId, toStatus, reason, me
         }
     }
     await client.query(`UPDATE customer SET status = $1, updated_at = now() WHERE id = $2`, [toStatus, customerId]);
+    if (toStatus === 'deleted') {
+        // Automatically close / deactivate open savings, RD, and FD accounts
+        await client.query(`UPDATE savings_account
+          SET status = 'closed', closed_on = CURRENT_DATE, closure_reason = $1, updated_at = now()
+        WHERE customer_id = $2 AND status != 'closed'`, [`Customer profile deleted: ${reason}`, customerId]);
+        await client.query(`UPDATE rd_account
+          SET status = 'cancelled', closed_on = CURRENT_DATE, updated_at = now()
+        WHERE customer_id = $2 AND status NOT IN ('completed', 'matured', 'closed_early', 'cancelled')`, [customerId]);
+        await client.query(`UPDATE fd_account
+          SET status = 'closed', closed_on = CURRENT_DATE, updated_at = now()
+        WHERE customer_id = $2 AND status NOT IN ('matured', 'closed_early', 'closed')`, [customerId]);
+    }
     await client.query(`INSERT INTO customer_status_history
        (customer_id, from_status, to_status, reason, changed_by)
      VALUES ($1, $2, $3, $4, $5)`, [customerId, fromStatus, toStatus, reason, actor.staffId]);

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authenticate, requirePermission, requireRole } from '../../middleware/auth.js';
 import { parse, validateBody } from '../../middleware/validate.js';
 import { UnauthorizedError } from '../../core/errors.js';
-import { listProducts, createProduct, createAccount, listAccounts, getAccount, updateAccount, freezeAccount, closeAccount, reopenAccount, approveAccount, postTransaction, listTransactions, createAdjustment, getStatement, } from './deposits.service.js';
+import { listProducts, createProduct, createAccount, listAccounts, getAccount, updateAccount, freezeAccount, closeAccount, deleteAccount, reopenAccount, approveAccount, postTransaction, listTransactions, createAdjustment, getStatement, } from './deposits.service.js';
 import { createProductSchema, listProductsQuerySchema, createAccountSchema, updateAccountSchema, freezeAccountSchema, closeAccountSchema, reopenAccountSchema, approveAccountSchema, listAccountsQuerySchema, postTransactionSchema, listTransactionsQuerySchema, createAdjustmentSchema, statementQuerySchema, idParamSchema, } from './deposits.schemas.js';
 /**
  * Deposits / savings HTTP surface (docs/backend-master-spec.md §9).
@@ -102,18 +102,25 @@ depositsRouter.post('/accounts/:id/freeze', authenticate, requireRole('president
     const account = await freezeAccount(actor, idParam(request), input, requestMeta(request));
     response.status(200).json(account);
 });
-// POST /api/v1/deposits/accounts/:id/close — close an account (M.D. / President).
-// Balance must be zero (spec §9.1); closure is approved by the designated
-// person on a separate approval flow in the corrections module (spec §19).
-depositsRouter.post('/accounts/:id/close', authenticate, requireRole('president', 'managing_director'), validateBody(closeAccountSchema), async (request, response) => {
+// POST /api/v1/deposits/accounts/:id/close — close an account (M.D. / President / Manager / Super Admin).
+depositsRouter.post('/accounts/:id/close', authenticate, requireRole('president', 'vice_president', 'managing_director', 'manager', 'super_admin'), validateBody(closeAccountSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const account = await closeAccount(actor, idParam(request), input, requestMeta(request));
     response.status(200).json(account);
 });
+// DELETE /api/v1/deposits/accounts/:id — delete/close a deposit account and settle any non-zero balance
+depositsRouter.delete('/accounts/:id', authenticate, requireRole('president', 'vice_president', 'managing_director', 'manager', 'super_admin'), async (request, response) => {
+    const actor = authOf(request);
+    const reason = (typeof request.body === 'object' && request.body && 'reason' in request.body && typeof request.body.reason === 'string')
+        ? request.body.reason
+        : (request.query.reason || 'Account closed and removed from active portfolio');
+    const account = await deleteAccount(actor, idParam(request), { reason }, requestMeta(request));
+    response.status(200).json(account);
+});
 // POST /api/v1/deposits/accounts/:id/reopen — reopen a frozen or closed
-// account (M.D. / President).
-depositsRouter.post('/accounts/:id/reopen', authenticate, requireRole('president', 'managing_director'), validateBody(reopenAccountSchema), async (request, response) => {
+// account (M.D. / President / Manager / Super Admin).
+depositsRouter.post('/accounts/:id/reopen', authenticate, requireRole('president', 'vice_president', 'managing_director', 'manager', 'super_admin'), validateBody(reopenAccountSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const account = await reopenAccount(actor, idParam(request), input, requestMeta(request));
@@ -121,7 +128,7 @@ depositsRouter.post('/accounts/:id/reopen', authenticate, requireRole('president
 });
 // POST /api/v1/deposits/accounts/:id/approve — second reviewer / designated
 // person approval for an account opening (spec §9.1). President, VP or M.D.
-depositsRouter.post('/accounts/:id/approve', authenticate, requireRole('president', 'vice_president', 'managing_director'), validateBody(approveAccountSchema), async (request, response) => {
+depositsRouter.post('/accounts/:id/approve', authenticate, requireRole('president', 'vice_president', 'managing_director', 'super_admin'), validateBody(approveAccountSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const account = await approveAccount(actor, idParam(request), input, requestMeta(request));
@@ -150,9 +157,9 @@ depositsRouter.post('/accounts/:id/transactions', authenticate, requirePermissio
 // Adjustments and statements
 // ---------------------------------------------------------------------------
 // POST /api/v1/deposits/accounts/:id/adjustments — create a compensating
-// adjustment entry (M.D. / President). The original ledger row is never modified; a
+// adjustment entry (M.D. / President / Manager / Super Admin). The original ledger row is never modified; a
 // fresh entry is appended and linked through account_adjustment (spec §9.1).
-depositsRouter.post('/accounts/:id/adjustments', authenticate, requireRole('president', 'managing_director'), validateBody(createAdjustmentSchema), async (request, response) => {
+depositsRouter.post('/accounts/:id/adjustments', authenticate, requireRole('president', 'vice_president', 'managing_director', 'manager', 'super_admin'), validateBody(createAdjustmentSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const adjustment = await createAdjustment(actor, idParam(request), input, requestMeta(request));

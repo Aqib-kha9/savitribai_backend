@@ -15,6 +15,7 @@ import {
   waivePenalty,
   rescheduleAccount,
   closeEarlyAccount,
+  cancelAccount,
   surplusTransfer,
   approveAccount,
 } from './rd.service.js';
@@ -215,12 +216,27 @@ rdRouter.post(
 rdRouter.post(
   '/accounts/:id/close-early',
   authenticate,
-  requireRole('president', 'managing_director'),
+  requireRole('president', 'vice_president', 'managing_director', 'manager', 'super_admin'),
   validateBody(closeEarlySchema),
   async (request, response) => {
     const actor = authOf(request);
     const input = request.body as CloseEarlyInput;
     const result = await closeEarlyAccount(actor, accountIdParam(request), input, requestMeta(request));
+    response.status(200).json(result);
+  },
+);
+
+// DELETE /api/v1/rd/accounts/:id — cancel/close an RD account and waive remaining dues
+rdRouter.delete(
+  '/accounts/:id',
+  authenticate,
+  requireRole('president', 'vice_president', 'managing_director', 'manager', 'super_admin'),
+  async (request, response) => {
+    const actor = authOf(request);
+    const reason = (typeof request.body === 'object' && request.body && 'reason' in request.body && typeof request.body.reason === 'string')
+      ? request.body.reason
+      : ((request.query.reason as string) || 'RD account cancelled and removed from active portfolio');
+    const result = await cancelAccount(actor, accountIdParam(request), { reason }, requestMeta(request));
     response.status(200).json(result);
   },
 );

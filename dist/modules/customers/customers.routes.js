@@ -133,14 +133,14 @@ customersRouter.patch('/:id', authenticate, requirePermission('customers.write')
     response.status(200).json(customer);
 });
 // POST /api/v1/customers/:id/status — change customer status (authorized officers).
-customersRouter.post('/:id/status', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(changeStatusSchema), async (request, response) => {
+customersRouter.post('/:id/status', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president', 'super_admin'), validateBody(changeStatusSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const customer = await changeCustomerStatus(actor, idParam(request), input, requestMeta(request));
     response.status(200).json(customer);
 });
 // DELETE /api/v1/customers/:id — soft-delete/deactivate customer profile with audit reason.
-customersRouter.delete('/:id', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), async (request, response) => {
+customersRouter.delete('/:id', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president', 'super_admin'), async (request, response) => {
     const actor = authOf(request);
     const reason = request.body?.reason || request.query?.reason || 'Customer profile deleted / deactivated';
     const customer = await changeCustomerStatus(actor, idParam(request), { status: 'deleted', reason }, requestMeta(request));

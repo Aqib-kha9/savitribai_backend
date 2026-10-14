@@ -792,8 +792,12 @@ export async function listAccounts(actor, queryInput, meta = {}) {
     if (queryInput.branchId) {
         where.push(`ra.branch_id = ${addParam(queryInput.branchId)}`);
     }
+    where.push("c.status != 'deleted'");
     if (queryInput.status) {
         where.push(`ra.status = ${addParam(queryInput.status)}`);
+    }
+    else {
+        where.push("ra.status != 'cancelled'");
     }
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     const limit = queryInput.limit;
@@ -1239,6 +1243,39 @@ export async function closeEarlyAccount(actor, accountId, input, meta = {}) {
         });
         const accountView = await loadRdAccountDetail(client, accountId);
         return { account: accountView, closureFee };
+    });
+    return result;
+}
+export async function cancelAccount(actor, accountId, input, meta = {}) {
+    const result = await transaction(async (client) => {
+        const account = await selectRdAccountById(client, accountId);
+        if (!account)
+            throw new NotFoundError('RD account');
+        if (account.status === 'cancelled') {
+            return loadRdAccountDetail(client, accountId);
+        }
+        // Waive any remaining due instalments
+        await client.query(`UPDATE rd_instalment
+          SET status = 'waived', updated_at = now()
+        WHERE rd_account_id = $1 AND status IN ('due','partial','missed','overdue')`, [accountId]);
+        await client.query(`UPDATE rd_account
+          SET status = 'cancelled', updated_at = now()
+        WHERE id = $1`, [accountId]);
+        await audit(client, {
+            ...actorAuditBase(actor),
+            requestId: meta.requestId ?? null,
+            action: AUDIT_ACTIONS.RD_ACCOUNT_CANCELLED,
+            entityType: 'rd_account',
+            entityId: accountId,
+            metadata: {
+                accountNumber: account.account_number,
+                fromStatus: account.status,
+                toStatus: 'cancelled',
+                reason: input.reason,
+                cancelledBy: actor.staffId,
+            },
+        });
+        return loadRdAccountDetail(client, accountId);
     });
     return result;
 }

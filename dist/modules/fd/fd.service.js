@@ -622,8 +622,12 @@ export async function listAccounts(actor, queryInput, meta = {}) {
     if (queryInput.branchId) {
         where.push(`fa.branch_id = ${addParam(queryInput.branchId)}`);
     }
+    where.push("c.status != 'deleted'");
     if (queryInput.status) {
         where.push(`fa.status = ${addParam(queryInput.status)}`);
+    }
+    else {
+        where.push("fa.status != 'closed'");
     }
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     const limit = queryInput.limit;
@@ -867,6 +871,40 @@ export async function closeEarly(actor, accountId, input, meta = {}) {
         });
         const accountView = await loadFdAccountDetail(client, accountId);
         return { account: accountView, closurePenalty };
+    });
+    return result;
+}
+export async function closeAccount(actor, accountId, input, meta = {}) {
+    const result = await transaction(async (client) => {
+        const account = await selectFdAccountById(client, accountId);
+        if (!account)
+            throw new NotFoundError('FD account');
+        if (account.status === 'closed') {
+            return loadFdAccountDetail(client, accountId);
+        }
+        // Release any active lien
+        await client.query(`UPDATE fd_lien
+          SET status = 'released', released_on = now(), released_by = $1, updated_at = now()
+        WHERE fd_account_id = $2 AND status = 'active'`, [actor.staffId, accountId]);
+        const closedOn = istBusinessDate();
+        await client.query(`UPDATE fd_account
+          SET status = 'closed', closed_on = $1::date, updated_at = now()
+        WHERE id = $2`, [closedOn, accountId]);
+        await audit(client, {
+            ...actorAuditBase(actor),
+            requestId: meta.requestId ?? null,
+            action: AUDIT_ACTIONS.FD_ACCOUNT_CLOSED,
+            entityType: 'fd_account',
+            entityId: accountId,
+            metadata: {
+                accountNumber: account.account_number,
+                fromStatus: account.status,
+                toStatus: 'closed',
+                reason: input.reason,
+                closedBy: actor.staffId,
+            },
+        });
+        return loadFdAccountDetail(client, accountId);
     });
     return result;
 }
