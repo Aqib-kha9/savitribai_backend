@@ -32,6 +32,7 @@ export const collectionSubmissionStatusSchema = z.enum([
 ]);
 export const collectionProductTypeSchema = z.enum([
     'savingsDeposit',
+    'dailyDeposit',
     'recurringDeposit',
     'loan',
     'penalty',

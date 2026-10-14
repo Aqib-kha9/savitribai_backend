@@ -34,6 +34,7 @@ import type {
   ReviewCollectionInput,
   ReverseCollectionInput,
   SubmitCollectionInput,
+  UpdateCollectionInput,
   VisitInput,
 } from './collections.schemas.js';
 import type {
@@ -642,7 +643,7 @@ function pickAccountField(
     loanId?: string | undefined;
   },
 ): { column: ProductAccountColumn; id: string } {
-  if (productType === 'savingsDeposit') {
+  if (productType === 'savingsDeposit' || productType === 'dailyDeposit') {
     return { column: 'savings_account_id', id: value.savingsAccountId as string };
   }
   if (productType === 'recurringDeposit') {
@@ -807,7 +808,7 @@ async function insertCollectionEntry(
     receiptSeq = 'receipt_loan';
   } else if (p.productType === 'recurringDeposit') {
     receiptSeq = 'receipt_rd';
-  } else if (p.accountNumber.startsWith('DDA') || p.productLabel.toLowerCase().includes('daily')) {
+  } else if (p.productType === 'dailyDeposit' || p.accountNumber.startsWith('DDA') || p.productLabel.toLowerCase().includes('daily')) {
     receiptSeq = 'receipt_dd';
   } else if (p.productType === 'savingsDeposit') {
     receiptSeq = 'receipt_sb';
@@ -886,7 +887,7 @@ export async function submitCollection(
         agentCode: agent.agent_code,
         customerId: input.customerId,
         customerName: customer.full_name,
-        productType: input.productType,
+        productType: input.productType === 'dailyDeposit' ? 'savingsDeposit' : input.productType,
         accountColumn: account.column,
         accountId: account.id,
         accountNumber: target.accountNumber,
@@ -924,7 +925,7 @@ export async function submitCollection(
           agentId: agent.id,
           agentCode: agent.agent_code,
           customerId: input.customerId,
-          productType: input.productType,
+          productType: input.productType === 'dailyDeposit' ? 'savingsDeposit' : input.productType,
           amount: input.amount,
           mode: input.mode,
           submittedFromOffline: input.submittedFromOffline,
@@ -1050,7 +1051,10 @@ export async function listCollections(
   if (queryInput.status) where.push(`ce.status = ${addParam(queryInput.status)}`);
   if (queryInput.agentId) where.push(`ce.agent_id = ${addParam(queryInput.agentId)}`);
   if (queryInput.customerId) where.push(`ce.customer_id = ${addParam(queryInput.customerId)}`);
-  if (queryInput.productType) where.push(`ce.product_type = ${addParam(queryInput.productType)}`);
+  if (queryInput.productType) {
+    const pt = queryInput.productType === 'dailyDeposit' ? 'savingsDeposit' : queryInput.productType;
+    where.push(`ce.product_type = ${addParam(pt)}`);
+  }
   if (queryInput.mode) where.push(`ce.mode = ${addParam(queryInput.mode)}`);
   if (queryInput.dateFrom) where.push(`ce.business_date >= ${addParam(queryInput.dateFrom)}`);
   if (queryInput.dateTo) where.push(`ce.business_date <= ${addParam(queryInput.dateTo)}`);
@@ -1321,6 +1325,107 @@ export async function deleteDuplicateCollection(
 }
 
 // ---------------------------------------------------------------------------
+// Collection edit (PATCH /collections/:id) — managing_director / manager / president
+// ---------------------------------------------------------------------------
+
+export async function updateCollection(
+  actor: AuthContext,
+  id: string,
+  input: UpdateCollectionInput,
+  meta: RequestMeta = {},
+): Promise<CollectionView> {
+  return transaction<CollectionView>(async (client) => {
+    const row = await selectCollectionById(client, id);
+    if (!row) throw new NotFoundError('Collection');
+    if (row.is_deleted) {
+      throw new ConflictError('Collection has been deleted', 'COLLECTION_DELETED');
+    }
+    // Accepted collections have been committed to the financial ledger and cannot
+    // be directly mutated (banking immutability §14.5). They must be reversed.
+    if (row.status === 'accepted') {
+      throw new BusinessRuleError(
+        'An accepted collection cannot be directly edited. It must be reversed with a compensating ledger entry.',
+        'ACCEPTED_COLLECTION_NOT_EDITABLE',
+      );
+    }
+
+    const updates: string[] = ['updated_at = now()'];
+    const params: unknown[] = [id];
+    let paramIndex = 2;
+
+    const previousValues: Record<string, unknown> = {};
+    const newValues: Record<string, unknown> = {};
+
+    if (input.amount !== undefined) {
+      previousValues.amount = row.amount;
+      newValues.amount = input.amount;
+      updates.push(`amount = $${paramIndex++}`);
+      params.push(input.amount);
+    }
+    if (input.mode !== undefined) {
+      previousValues.mode = row.mode;
+      newValues.mode = input.mode;
+      updates.push(`mode = $${paramIndex++}`);
+      params.push(input.mode);
+    }
+    if (input.instrumentRef !== undefined) {
+      previousValues.instrument_ref = row.instrument_ref;
+      newValues.instrument_ref = input.instrumentRef;
+      updates.push(`instrument_ref = $${paramIndex++}`);
+      params.push(input.instrumentRef);
+    }
+    if (input.remarks !== undefined) {
+      newValues.remarks = input.remarks;
+    }
+
+    await client.query(
+      `UPDATE collection_entry SET ${updates.join(', ')} WHERE id = $1`,
+      params,
+    );
+
+    // Also update receipt amount/mode if amount/mode changed so customer receipt matches
+    if (input.amount !== undefined || input.mode !== undefined) {
+      const receiptUpdates: string[] = ['issued_at = issued_at'];
+      const receiptParams: unknown[] = [id];
+      let rIdx = 2;
+      if (input.amount !== undefined) {
+        receiptUpdates.push(`amount = $${rIdx++}`);
+        receiptParams.push(input.amount);
+      }
+      if (input.mode !== undefined) {
+        receiptUpdates.push(`mode = $${rIdx++}`);
+        receiptParams.push(input.mode);
+      }
+      await client.query(
+        `UPDATE collection_receipt SET ${receiptUpdates.join(', ')} WHERE collection_id = $1`,
+        receiptParams,
+      );
+    }
+
+    await audit(client, {
+      ...actorAuditBase(actor),
+      requestId: meta.requestId ?? null,
+      action: AUDIT_ACTIONS.COLLECTION_UPDATED,
+      entityType: 'collection_entry',
+      entityId: id,
+      businessDate: row.business_date,
+      metadata: {
+        reason: input.reason,
+        customerId: row.customer_id,
+        agentId: row.agent_id,
+        previousValues,
+        newValues,
+        updatedBy: actor.staffId,
+      },
+    });
+
+    const updated = await selectCollectionById(client, id);
+    if (!updated) throw new NotFoundError('Collection');
+    return toCollectionView(updated);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Short-payment allocation (POST /collections/:id/allocate) — managing_director
 // ---------------------------------------------------------------------------
 
@@ -1427,7 +1532,7 @@ export async function approveEmergencyCollection(
       agentCode: agentRow.agent_code,
       customerId: input.customerId,
       customerName: customer.full_name,
-      productType: input.productType,
+      productType: input.productType === 'dailyDeposit' ? 'savingsDeposit' : input.productType,
       accountColumn: account.column,
       accountId: account.id,
       accountNumber: target.accountNumber,
@@ -1507,7 +1612,10 @@ export async function getCollectionTotals(
   where.push(`ce.business_date <= ${addParam(dateTo)}`);
   if (queryInput.agentId) where.push(`ce.agent_id = ${addParam(queryInput.agentId)}`);
   if (queryInput.customerId) where.push(`ce.customer_id = ${addParam(queryInput.customerId)}`);
-  if (queryInput.productType) where.push(`ce.product_type = ${addParam(queryInput.productType)}`);
+  if (queryInput.productType) {
+    const pt = queryInput.productType === 'dailyDeposit' ? 'savingsDeposit' : queryInput.productType;
+    where.push(`ce.product_type = ${addParam(pt)}`);
+  }
   if (queryInput.mode) where.push(`ce.mode = ${addParam(queryInput.mode)}`);
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';

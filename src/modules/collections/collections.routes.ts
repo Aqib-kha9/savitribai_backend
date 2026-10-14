@@ -16,6 +16,7 @@ import {
   reviewCollection,
   reverseCollection,
   submitCollection,
+  updateCollection,
 } from './collections.service.js';
 import type { RequestMeta } from './collections.service.js';
 import {
@@ -30,6 +31,7 @@ import {
   reviewCollectionSchema,
   reverseCollectionSchema,
   submitCollectionSchema,
+  updateCollectionSchema,
   visitSchema,
 } from './collections.schemas.js';
 import type {
@@ -42,6 +44,7 @@ import type {
   ReviewCollectionInput,
   ReverseCollectionInput,
   SubmitCollectionInput,
+  UpdateCollectionInput,
   VisitInput,
 } from './collections.schemas.js';
 
@@ -258,6 +261,33 @@ collectionsRouter.post(
     const actor = authOf(request);
     const input = request.body as DeleteDuplicateInput;
     const collection = await deleteDuplicateCollection(actor, idParam(request), input, requestMeta(request));
+    response.status(200).json(collection);
+  },
+);
+
+// DELETE /api/v1/collections/:id — soft-deletes a duplicate or mistaken collection entry.
+collectionsRouter.delete(
+  '/:id',
+  authenticate,
+  requireRole('managing_director', 'manager', 'president'),
+  async (request, response) => {
+    const actor = authOf(request);
+    const reason = (request.body?.reason as string) || (request.query?.reason as string) || 'Removed by administrator';
+    const collection = await deleteDuplicateCollection(actor, idParam(request), { reason }, requestMeta(request));
+    response.status(200).json(collection);
+  },
+);
+
+// PATCH /api/v1/collections/:id — edit a pending/waiting collection entry.
+collectionsRouter.patch(
+  '/:id',
+  authenticate,
+  requireRole('managing_director', 'manager', 'president', 'vice_president'),
+  validateBody(updateCollectionSchema),
+  async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body as UpdateCollectionInput;
+    const collection = await updateCollection(actor, idParam(request), input, requestMeta(request));
     response.status(200).json(collection);
   },
 );

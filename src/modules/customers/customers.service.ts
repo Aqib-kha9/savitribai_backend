@@ -1178,6 +1178,8 @@ function buildCustomerFilters(queryInput: CustomerFilters): {
   }
   if (queryInput.status) {
     where.push(`c.status = ${addParam(queryInput.status)}`);
+  } else {
+    where.push(`c.status != 'deleted'`);
   }
   if (queryInput.membershipCategory) {
     where.push(`c.membership_category = ${addParam(queryInput.membershipCategory)}`);
@@ -1464,6 +1466,19 @@ async function applyStatusChange(
 
   const fromStatus = existing.status as CustomerStatus;
   if (fromStatus === toStatus) return; // idempotent no-op
+
+  if (toStatus === 'deleted') {
+    const loanCheck = await client.query<{ count: string }>(
+      `SELECT count(*)::int as count FROM loan_application WHERE customer_id = $1 AND status NOT IN ('rejected', 'closed', 'cancelled')`,
+      [customerId],
+    );
+    if (parseInt(loanCheck.rows[0]?.count ?? '0', 10) > 0) {
+      throw new BusinessRuleError(
+        'Cannot delete customer with active or pending loans. Close or settle loans first.',
+        'CUSTOMER_ACTIVE_LOANS',
+      );
+    }
+  }
 
   await client.query(
     `UPDATE customer SET status = $1, updated_at = now() WHERE id = $2`,

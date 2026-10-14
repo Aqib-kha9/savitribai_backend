@@ -968,6 +968,98 @@ export async function approveApplication(actor, applicationId, input, meta = {})
     });
     return updated;
 }
+/**
+ * Cancel an undisbursed loan application with a mandatory reason.
+ */
+export async function cancelApplication(actor, applicationId, input, meta = {}) {
+    const updated = await transaction(async (client) => {
+        const application = await selectLoanApplicationById(client, applicationId);
+        if (!application)
+            throw new NotFoundError('Loan application');
+        if (['disbursed', 'closed', 'cancelled'].includes(application.status)) {
+            throw new BusinessRuleError(`Cannot cancel loan application in ${application.status} state`, 'APPLICATION_NOT_CANCELLABLE');
+        }
+        const now = new Date();
+        await client.query(`UPDATE loan_application
+          SET status = 'cancelled',
+              rejection_reason = $1,
+              updated_at = $2
+        WHERE id = $3`, [input.reason, now, applicationId]);
+        await audit(client, {
+            ...actorAuditBase(actor),
+            requestId: meta.requestId ?? null,
+            action: AUDIT_ACTIONS.LOAN_APPLICATION_CANCELLED,
+            entityType: 'loan_application',
+            entityId: applicationId,
+            metadata: {
+                applicationNumber: application.application_number,
+                reason: input.reason,
+                cancelledBy: actor.staffId,
+            },
+        });
+        return loadLoanApplication(client, applicationId);
+    });
+    return updated;
+}
+/**
+ * Update details of an undisbursed loan application.
+ */
+export async function updateApplication(actor, applicationId, input, meta = {}) {
+    const updated = await transaction(async (client) => {
+        const application = await selectLoanApplicationById(client, applicationId);
+        if (!application)
+            throw new NotFoundError('Loan application');
+        if (!['applied', 'recommended'].includes(application.status)) {
+            throw new BusinessRuleError(`Only an undisbursed application can be edited (current status: ${application.status})`, 'APPLICATION_NOT_EDITABLE');
+        }
+        const updates = ['updated_at = now()'];
+        const params = [applicationId];
+        let pIdx = 2;
+        if (input.purpose !== undefined) {
+            updates.push(`purpose = $${pIdx++}`);
+            params.push(input.purpose);
+        }
+        if (input.requestedAmount !== undefined) {
+            updates.push(`requested_amount = $${pIdx++}`);
+            params.push(input.requestedAmount);
+        }
+        if (input.tenureMonths !== undefined) {
+            updates.push(`tenure_months = $${pIdx++}`);
+            params.push(input.tenureMonths);
+        }
+        if (input.repaymentFrequency !== undefined) {
+            updates.push(`repayment_frequency = $${pIdx++}`);
+            params.push(input.repaymentFrequency);
+        }
+        if (input.proposedInterestRate !== undefined) {
+            updates.push(`proposed_interest_rate = $${pIdx++}`);
+            params.push(input.proposedInterestRate);
+        }
+        const existingDocs = toRecord(application.documents) || {};
+        const newDocs = { ...existingDocs, ...(input.documents || {}) };
+        if (input.guarantors !== undefined)
+            newDocs.guarantors = input.guarantors;
+        if (input.collateral !== undefined)
+            newDocs.collateral = input.collateral;
+        updates.push(`documents = $${pIdx++}::jsonb`);
+        params.push(JSON.stringify(newDocs));
+        await client.query(`UPDATE loan_application SET ${updates.join(', ')} WHERE id = $1`, params);
+        await audit(client, {
+            ...actorAuditBase(actor),
+            requestId: meta.requestId ?? null,
+            action: AUDIT_ACTIONS.LOAN_APPLICATION_UPDATED,
+            entityType: 'loan_application',
+            entityId: applicationId,
+            metadata: {
+                applicationNumber: application.application_number,
+                reason: input.reason,
+                updatedBy: actor.staffId,
+            },
+        });
+        return loadLoanApplication(client, applicationId);
+    });
+    return updated;
+}
 // ---------------------------------------------------------------------------
 // Disbursal (§12.5) — converts an approved application into a live loan.
 // Interest is flat on the approved amount, the schedule is generated with the

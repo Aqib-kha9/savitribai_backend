@@ -385,7 +385,10 @@ export async function listMySubmissions(
   where.push(`ce.is_deleted = false`);
 
   if (queryInput.status) where.push(`ce.status = ${addParam(queryInput.status)}`);
-  if (queryInput.productType) where.push(`ce.product_type = ${addParam(queryInput.productType)}`);
+  if (queryInput.productType) {
+    const pt = queryInput.productType === 'dailyDeposit' ? 'savingsDeposit' : queryInput.productType;
+    where.push(`ce.product_type = ${addParam(pt)}`);
+  }
   if (queryInput.mode) where.push(`ce.mode = ${addParam(queryInput.mode)}`);
   if (queryInput.businessDate) where.push(`ce.business_date = ${addParam(queryInput.businessDate)}`);
   if (queryInput.fromDate) where.push(`ce.business_date >= ${addParam(queryInput.fromDate)}`);

@@ -1362,15 +1362,15 @@ export async function changeWithdrawal(
     const row = await selectWithdrawalById(client, withdrawalId, true);
     if (!row) throw new NotFoundError('Withdrawal request');
     assertBranchScope(actor, row);
-    if (row.status !== 'approved') {
+    if (!['pending', 'under_review', 'approved'].includes(row.status)) {
       throw new BusinessRuleError(
-        `Only an approved withdrawal can be changed by the President (current status: ${row.status})`,
+        `Only an undisbursed withdrawal (pending, review, or approved) can be changed (current status: ${row.status})`,
         'WITHDRAWAL_NOT_CHANGEABLE',
       );
     }
-    if (actor.role !== 'president' && !isGlobalAuthority(actor)) {
+    if (row.status === 'approved' && actor.role !== 'president' && !isGlobalAuthority(actor)) {
       throw new BusinessRuleError(
-        'Only the President can change an approved withdrawal',
+        'Only the President or Managing Director can change an already-approved withdrawal',
         'PRESIDENT_APPROVAL_REQUIRED',
       );
     }
@@ -1404,7 +1404,7 @@ export async function changeWithdrawal(
               is_high_value = $5, status = 'pending',
               approved_by = NULL, approved_on = NULL, rejection_reason = NULL,
               updated_at = now()
-        WHERE id = $6 AND status = 'approved'`,
+        WHERE id = $6 AND status IN ('pending', 'under_review', 'approved')`,
       [
         input.amount,
         balanceBefore,

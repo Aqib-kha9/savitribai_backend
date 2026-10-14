@@ -853,11 +853,11 @@ export async function changeWithdrawal(actor, withdrawalId, input, meta = {}) {
         if (!row)
             throw new NotFoundError('Withdrawal request');
         assertBranchScope(actor, row);
-        if (row.status !== 'approved') {
-            throw new BusinessRuleError(`Only an approved withdrawal can be changed by the President (current status: ${row.status})`, 'WITHDRAWAL_NOT_CHANGEABLE');
+        if (!['pending', 'under_review', 'approved'].includes(row.status)) {
+            throw new BusinessRuleError(`Only an undisbursed withdrawal (pending, review, or approved) can be changed (current status: ${row.status})`, 'WITHDRAWAL_NOT_CHANGEABLE');
         }
-        if (actor.role !== 'president' && !isGlobalAuthority(actor)) {
-            throw new BusinessRuleError('Only the President can change an approved withdrawal', 'PRESIDENT_APPROVAL_REQUIRED');
+        if (row.status === 'approved' && actor.role !== 'president' && !isGlobalAuthority(actor)) {
+            throw new BusinessRuleError('Only the President or Managing Director can change an already-approved withdrawal', 'PRESIDENT_APPROVAL_REQUIRED');
         }
         // MED-9: the new amount must clear the same rules as a fresh request for
         // EVERY account kind — not just savings. Savings carries the full balance
@@ -886,7 +886,7 @@ export async function changeWithdrawal(actor, withdrawalId, input, meta = {}) {
               is_high_value = $5, status = 'pending',
               approved_by = NULL, approved_on = NULL, rejection_reason = NULL,
               updated_at = now()
-        WHERE id = $6 AND status = 'approved'`, [
+        WHERE id = $6 AND status IN ('pending', 'under_review', 'approved')`, [
             input.amount,
             balanceBefore,
             input.reason,

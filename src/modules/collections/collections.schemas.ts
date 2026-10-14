@@ -131,6 +131,7 @@ export const submitCollectionSchema = z
   .superRefine((value, ctx) => {
     const accountFields = {
       savingsDeposit: 'savingsAccountId',
+      dailyDeposit: 'savingsAccountId',
       recurringDeposit: 'rdAccountId',
       loan: 'loanId',
       penalty: null,
@@ -249,6 +250,16 @@ export const deleteDuplicateSchema = z.object({
 });
 export type DeleteDuplicateInput = z.infer<typeof deleteDuplicateSchema>;
 
+/** Office edit of a pending/waiting collection entry — PATCH /:id */
+export const updateCollectionSchema = z.object({
+  amount: amountSchema.optional(),
+  mode: collectionModeSchema.optional(),
+  instrumentRef: z.string().trim().max(100).optional().nullable(),
+  remarks: z.string().trim().max(500).optional().nullable(),
+  reason: z.string().trim().min(3, 'A reason of at least 3 characters is required for editing a collection entry').max(1000),
+});
+export type UpdateCollectionInput = z.infer<typeof updateCollectionSchema>;
+
 /**
  * Allocation bucket for a short-paid collection — the bank decides how a
  * payment splits across principal / interest / penalty / fees / product
@@ -297,6 +308,7 @@ export const emergencyApprovalSchema = z.object({
 }).superRefine((value, ctx) => {
   const accountFields = {
     savingsDeposit: 'savingsAccountId',
+    dailyDeposit: 'savingsAccountId',
     recurringDeposit: 'rdAccountId',
     loan: 'loanId',
     penalty: null,

@@ -169,7 +169,7 @@ withdrawalsRouter.post('/:id/confirm', authenticate, requireRole('super_admin', 
 // POST /api/v1/withdrawals/:id/change — Presidential change of an approved
 // request (spec §13.1). The request re-enters the pending queue; the original
 // approval decision is preserved in the event history.
-withdrawalsRouter.post('/:id/change', authenticate, requireRole('president'), validateBody(changeWithdrawalSchema), async (request, response) => {
+withdrawalsRouter.post('/:id/change', authenticate, requireRole('president', 'managing_director', 'manager', 'vice_president'), validateBody(changeWithdrawalSchema), async (request, response) => {
   const actor = authOf(request);
   const input = request.body as ChangeWithdrawalInput;
   const withdrawal = await changeWithdrawal(actor, idParam(request), input, requestMeta(request));

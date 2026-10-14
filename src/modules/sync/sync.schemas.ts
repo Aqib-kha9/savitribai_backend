@@ -39,6 +39,7 @@ export type CollectionSubmissionStatus = z.infer<typeof collectionSubmissionStat
 
 export const collectionProductTypeSchema = z.enum([
   'savingsDeposit',
+  'dailyDeposit',
   'recurringDeposit',
   'loan',
   'penalty',

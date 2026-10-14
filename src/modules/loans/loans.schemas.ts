@@ -217,6 +217,24 @@ export const createApplicationSchema = z
   });
 export type CreateApplicationInput = z.infer<typeof createApplicationSchema>;
 
+export const cancelApplicationSchema = z.object({
+  reason: z.string().trim().min(3, 'A cancellation reason of at least 3 characters is required').max(500),
+});
+export type CancelApplicationInput = z.infer<typeof cancelApplicationSchema>;
+
+export const updateApplicationSchema = z.object({
+  purpose: z.string().trim().min(3).max(300).optional(),
+  requestedAmount: amountSchema.optional(),
+  tenureMonths: z.coerce.number().int().min(1).max(240).optional(),
+  repaymentFrequency: loanRepaymentFrequencySchema.optional(),
+  proposedInterestRate: rateSchema.optional(),
+  guarantors: z.array(guarantorSchema).max(20).optional(),
+  collateral: z.array(collateralSchema).max(20).optional(),
+  documents: z.record(z.string(), z.unknown()).optional(),
+  reason: z.string().trim().min(3, 'A reason of at least 3 characters is required to update a loan application').max(500),
+});
+export type UpdateApplicationInput = z.infer<typeof updateApplicationSchema>;
+
 export const listApplicationsQuerySchema = z.object({
   search: z.string().trim().max(80).optional(),
   customerId: z.string().uuid('Invalid customer id').optional(),

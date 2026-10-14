@@ -2,8 +2,8 @@ import { Router } from 'express';
 import { authenticate, requirePermission, requireRole, requireSource } from '../../middleware/auth.js';
 import { parse, validateBody } from '../../middleware/validate.js';
 import { UnauthorizedError } from '../../core/errors.js';
-import { allocateShortPayment, approveEmergencyCollection, deleteDuplicateCollection, getCollectionStatus, getCollectionTotals, listCollections, listVisits, recordVisit, reviewCollection, reverseCollection, submitCollection, } from './collections.service.js';
-import { allocateCollectionSchema, collectionTotalsQuerySchema, deleteDuplicateSchema, emergencyApprovalSchema, idempotencyKeySchema, idParamSchema, listCollectionsQuerySchema, listVisitsQuerySchema, reviewCollectionSchema, reverseCollectionSchema, submitCollectionSchema, visitSchema, } from './collections.schemas.js';
+import { allocateShortPayment, approveEmergencyCollection, deleteDuplicateCollection, getCollectionStatus, getCollectionTotals, listCollections, listVisits, recordVisit, reviewCollection, reverseCollection, submitCollection, updateCollection, } from './collections.service.js';
+import { allocateCollectionSchema, collectionTotalsQuerySchema, deleteDuplicateSchema, emergencyApprovalSchema, idempotencyKeySchema, idParamSchema, listCollectionsQuerySchema, listVisitsQuerySchema, reviewCollectionSchema, reverseCollectionSchema, submitCollectionSchema, updateCollectionSchema, visitSchema, } from './collections.schemas.js';
 /**
  * Doorstep collections HTTP surface (docs/backend-master-spec.md §14).
  *
@@ -151,6 +151,20 @@ collectionsRouter.post('/:id/delete-duplicate', authenticate, requireRole('manag
     const actor = authOf(request);
     const input = request.body;
     const collection = await deleteDuplicateCollection(actor, idParam(request), input, requestMeta(request));
+    response.status(200).json(collection);
+});
+// DELETE /api/v1/collections/:id — soft-deletes a duplicate or mistaken collection entry.
+collectionsRouter.delete('/:id', authenticate, requireRole('managing_director', 'manager', 'president'), async (request, response) => {
+    const actor = authOf(request);
+    const reason = request.body?.reason || request.query?.reason || 'Removed by administrator';
+    const collection = await deleteDuplicateCollection(actor, idParam(request), { reason }, requestMeta(request));
+    response.status(200).json(collection);
+});
+// PATCH /api/v1/collections/:id — edit a pending/waiting collection entry.
+collectionsRouter.patch('/:id', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(updateCollectionSchema), async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body;
+    const collection = await updateCollection(actor, idParam(request), input, requestMeta(request));
     response.status(200).json(collection);
 });
 // POST /api/v1/collections/:id/allocate — decides how a short-paid

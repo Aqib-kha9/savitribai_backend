@@ -2,8 +2,8 @@ import { Router } from 'express';
 import { authenticate, requirePermission, requireRole } from '../../middleware/auth.js';
 import { parse, validateBody } from '../../middleware/validate.js';
 import { UnauthorizedError } from '../../core/errors.js';
-import { listProducts, createProduct, listApplications, listLoans, createApplication, recommendApplication, approveApplication, disburseLoan, getLoan, getSchedule, recordRepayment, correctRepayment, rescheduleLoan, settleLoan, writeOffLoan, transferLoan, grantWaiver, releaseSurplus, getStatements, } from './loans.service.js';
-import { createProductSchema, listProductsQuerySchema, createApplicationSchema, listApplicationsQuerySchema, listLoansQuerySchema, recommendSchema, approveSchema, disburseSchema, recordRepaymentSchema, correctRepaymentSchema, rescheduleSchema, settleSchema, writeOffSchema, transferSchema, waiverSchema, surplusReleaseSchema, scheduleQuerySchema, statementsQuerySchema, idParamSchema, uuidSchema, } from './loans.schemas.js';
+import { listProducts, createProduct, listApplications, listLoans, createApplication, cancelApplication, updateApplication, recommendApplication, approveApplication, disburseLoan, getLoan, getSchedule, recordRepayment, correctRepayment, rescheduleLoan, settleLoan, writeOffLoan, transferLoan, grantWaiver, releaseSurplus, getStatements, } from './loans.service.js';
+import { createProductSchema, listProductsQuerySchema, createApplicationSchema, cancelApplicationSchema, updateApplicationSchema, listApplicationsQuerySchema, listLoansQuerySchema, recommendSchema, approveSchema, disburseSchema, recordRepaymentSchema, correctRepaymentSchema, rescheduleSchema, settleSchema, writeOffSchema, transferSchema, waiverSchema, surplusReleaseSchema, scheduleQuerySchema, statementsQuerySchema, idParamSchema, uuidSchema, } from './loans.schemas.js';
 /**
  * Loans HTTP surface (docs/backend-master-spec.md §12).
  *
@@ -109,6 +109,27 @@ loansRouter.post('/applications/:id/approve', authenticate, requireRole('preside
     const actor = authOf(request);
     const input = request.body;
     const application = await approveApplication(actor, applicationIdParam(request), input, requestMeta(request));
+    response.status(200).json(application);
+});
+// PATCH /api/v1/loans/applications/:id — edit an undisbursed application
+loansRouter.patch('/applications/:id', authenticate, requirePermission('loans.write'), validateBody(updateApplicationSchema), async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body;
+    const application = await updateApplication(actor, applicationIdParam(request), input, requestMeta(request));
+    response.status(200).json(application);
+});
+// POST /api/v1/loans/applications/:id/cancel — cancel an undisbursed application with reason
+loansRouter.post('/applications/:id/cancel', authenticate, requirePermission('loans.write'), validateBody(cancelApplicationSchema), async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body;
+    const application = await cancelApplication(actor, applicationIdParam(request), input, requestMeta(request));
+    response.status(200).json(application);
+});
+// DELETE /api/v1/loans/applications/:id — cancel/delete an undisbursed application
+loansRouter.delete('/applications/:id', authenticate, requirePermission('loans.write'), async (request, response) => {
+    const actor = authOf(request);
+    const reason = request.body?.reason || request.query?.reason || 'Cancelled by loan officer';
+    const application = await cancelApplication(actor, applicationIdParam(request), { reason }, requestMeta(request));
     response.status(200).json(application);
 });
 // ---------------------------------------------------------------------------

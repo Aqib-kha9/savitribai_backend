@@ -10,6 +10,8 @@ import {
   listApplications,
   listLoans,
   createApplication,
+  cancelApplication,
+  updateApplication,
   recommendApplication,
   approveApplication,
   disburseLoan,
@@ -30,6 +32,8 @@ import {
   createProductSchema,
   listProductsQuerySchema,
   createApplicationSchema,
+  cancelApplicationSchema,
+  updateApplicationSchema,
   listApplicationsQuerySchema,
   listLoansQuerySchema,
   recommendSchema,
@@ -52,6 +56,8 @@ import type {
   CreateProductInput,
   ListProductsQuery,
   CreateApplicationInput,
+  CancelApplicationInput,
+  UpdateApplicationInput,
   ListApplicationsQuery,
   ListLoansQuery,
   RecommendInput,
@@ -195,6 +201,47 @@ loansRouter.post(
     const actor = authOf(request);
     const input = request.body as ApproveInput;
     const application = await approveApplication(actor, applicationIdParam(request), input, requestMeta(request));
+    response.status(200).json(application);
+  },
+);
+
+// PATCH /api/v1/loans/applications/:id — edit an undisbursed application
+loansRouter.patch(
+  '/applications/:id',
+  authenticate,
+  requirePermission('loans.write'),
+  validateBody(updateApplicationSchema),
+  async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body as UpdateApplicationInput;
+    const application = await updateApplication(actor, applicationIdParam(request), input, requestMeta(request));
+    response.status(200).json(application);
+  },
+);
+
+// POST /api/v1/loans/applications/:id/cancel — cancel an undisbursed application with reason
+loansRouter.post(
+  '/applications/:id/cancel',
+  authenticate,
+  requirePermission('loans.write'),
+  validateBody(cancelApplicationSchema),
+  async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body as CancelApplicationInput;
+    const application = await cancelApplication(actor, applicationIdParam(request), input, requestMeta(request));
+    response.status(200).json(application);
+  },
+);
+
+// DELETE /api/v1/loans/applications/:id — cancel/delete an undisbursed application
+loansRouter.delete(
+  '/applications/:id',
+  authenticate,
+  requirePermission('loans.write'),
+  async (request, response) => {
+    const actor = authOf(request);
+    const reason = (request.body?.reason as string) || (request.query?.reason as string) || 'Cancelled by loan officer';
+    const application = await cancelApplication(actor, applicationIdParam(request), { reason }, requestMeta(request));
     response.status(200).json(application);
   },
 );

@@ -207,6 +207,14 @@ customersRouter.post('/:id/status', authenticate, requireRole('managing_director
   response.status(200).json(customer);
 });
 
+// DELETE /api/v1/customers/:id — soft-delete/deactivate customer profile with audit reason.
+customersRouter.delete('/:id', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), async (request, response) => {
+  const actor = authOf(request);
+  const reason = (request.body?.reason as string) || (request.query?.reason as string) || 'Customer profile deleted / deactivated';
+  const customer = await changeCustomerStatus(actor, idParam(request), { status: 'deleted', reason }, requestMeta(request));
+  response.status(200).json(customer);
+});
+
 // POST /api/v1/customers/:id/transfer — branch transfer (Manager approves;
 // spec §8.1 / §8.3). Managing Director, President and Vice President allowed.
 customersRouter.post('/:id/transfer', authenticate, requireRole('manager', 'managing_director', 'president', 'vice_president'), validateBody(transferCustomerSchema), async (request, response) => {
