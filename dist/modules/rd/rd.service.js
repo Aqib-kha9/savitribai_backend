@@ -1,6 +1,6 @@
 import { query, transaction } from '../../database/client.js';
 import { appendAuditEvent, AUDIT_ACTIONS } from '../../audit/audit-writer.js';
-import { addDays, addMonths, istBusinessDate, isSunday } from '../../core/time.js';
+import { addDays, addMonths, istBusinessDate, isSunday, monthsBetween } from '../../core/time.js';
 import { BadRequestError, BusinessRuleError, ConflictError, NotFoundError } from '../../core/errors.js';
 import { allocateSequence } from '../../database/numbering.js';
 import { addMoney, compareMoney, fromCents, isZero, percentOf, subMoney, toCents, BUSINESS_RULES, } from '../../core/money.js';
@@ -151,15 +151,30 @@ function nextDueDate(date, frequency) {
             return addMonths(date, 3);
     }
 }
+export function getExpectedInstallmentCount(frequency, durationMonths) {
+    switch (frequency) {
+        case 'daily':
+            return durationMonths === 6 ? 180 : Math.round(durationMonths * 30);
+        case 'weekly':
+            return Math.round((durationMonths * 52) / 12);
+        case 'quarterly':
+            return Math.max(1, Math.round(durationMonths / 3));
+        case 'monthly':
+        default:
+            return Math.max(1, durationMonths);
+    }
+}
 /**
- * Generate due dates from `start` (inclusive) at `frequency` until the cursor
- * passes `end`. Sunday due dates are shifted to the next working day without
- * disturbing the underlying date grid, so the term length is preserved.
+ * Generate due dates from `start` (inclusive) at `frequency` until the maturity
+ * date `end` is reached (exclusive, as maturity date is the payout date) or
+ * `expectedCount` is satisfied. Sunday due dates are shifted to the next working
+ * day without disturbing the underlying date grid, so the term length is preserved.
  */
-function generateInstalmentDates(start, end, frequency) {
+function generateInstalmentDates(start, end, frequency, expectedCount) {
     const dates = [];
     let cursor = start;
-    while (cursor <= end && dates.length < MAX_SCHEDULE_INSTALMENTS) {
+    const max = expectedCount ?? MAX_SCHEDULE_INSTALMENTS;
+    while (cursor < end && dates.length < max) {
         dates.push(toWorkingDay(cursor));
         cursor = nextDueDate(cursor, frequency);
     }
@@ -692,7 +707,9 @@ export async function openAccount(actor, input, meta = {}) {
         if (maturityDate > upperBound) {
             throw new BusinessRuleError(`Term exceeds the scheme maximum of ${scheme.max_duration_months} months`, 'TERM_ABOVE_MAX');
         }
-        const dueDates = generateInstalmentDates(firstDueDate, maturityDate, input.frequency);
+        const termMonths = input.durationMonths ?? Math.max(1, monthsBetween(firstDueDate, maturityDate));
+        const expectedCount = getExpectedInstallmentCount(input.frequency, termMonths);
+        const dueDates = generateInstalmentDates(firstDueDate, maturityDate, input.frequency, expectedCount);
         if (dueDates.length === 0) {
             throw new BusinessRuleError('No instalments can be scheduled for this term', 'SCHEDULE_EMPTY');
         }
@@ -1120,7 +1137,12 @@ export async function rescheduleAccount(actor, accountId, input, meta = {}) {
         await client.query(`INSERT INTO rd_instalment (rd_account_id, instalment_number, due_date, expected_amount)
        SELECT $1, num, due, $2::numeric
          FROM unnest($3::int[], $4::date[]) AS t(num, due)`, [accountId, newAmount ?? account.instalment_amount, numbers, newDates]);
-        const newMaturityDate = newDates[newDates.length - 1] ?? account.maturity_date;
+        const lastDate = newDates[newDates.length - 1];
+        const newMaturityDate = lastDate
+            ? (account.maturity_date && account.maturity_date > lastDate
+                ? account.maturity_date
+                : nextDueDate(lastDate, account.frequency))
+            : account.maturity_date;
         await client.query(`UPDATE rd_account
           SET instalment_amount = $1::numeric,
               maturity_date = $2::date,

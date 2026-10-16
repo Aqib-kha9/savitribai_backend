@@ -7,6 +7,7 @@ import type { AuthContext } from '../../types/auth-context.js';
 import {
   allocateShortPayment,
   approveEmergencyCollection,
+  bulkReviewCollections,
   deleteDuplicateCollection,
   getCollectionStatus,
   getCollectionTotals,
@@ -21,6 +22,7 @@ import {
 import type { RequestMeta } from './collections.service.js';
 import {
   allocateCollectionSchema,
+  bulkReviewCollectionSchema,
   collectionTotalsQuerySchema,
   deleteDuplicateSchema,
   emergencyApprovalSchema,
@@ -36,6 +38,7 @@ import {
 } from './collections.schemas.js';
 import type {
   AllocateCollectionInput,
+  BulkReviewCollectionInput,
   CollectionTotalsQuery,
   DeleteDuplicateInput,
   EmergencyApprovalInput,
@@ -216,6 +219,20 @@ collectionsRouter.post(
     const input = request.body as EmergencyApprovalInput;
     const collection = await approveEmergencyCollection(actor, input, requestMeta(request));
     response.status(201).json(collection);
+  },
+);
+
+// POST /api/v1/collections/bulk-review — bulk review of multiple waiting submissions.
+collectionsRouter.post(
+  '/bulk-review',
+  authenticate,
+  requireRole('managing_director', 'manager', 'president', 'vice_president'),
+  validateBody(bulkReviewCollectionSchema),
+  async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body as BulkReviewCollectionInput;
+    const result = await bulkReviewCollections(actor, input, requestMeta(request));
+    response.status(200).json(result);
   },
 );
 

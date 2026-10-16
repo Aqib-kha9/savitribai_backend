@@ -2,8 +2,8 @@ import { Router } from 'express';
 import { authenticate, requirePermission, requireRole, requireSource } from '../../middleware/auth.js';
 import { parse, validateBody } from '../../middleware/validate.js';
 import { UnauthorizedError } from '../../core/errors.js';
-import { allocateShortPayment, approveEmergencyCollection, deleteDuplicateCollection, getCollectionStatus, getCollectionTotals, listCollections, listVisits, recordVisit, reviewCollection, reverseCollection, submitCollection, updateCollection, } from './collections.service.js';
-import { allocateCollectionSchema, collectionTotalsQuerySchema, deleteDuplicateSchema, emergencyApprovalSchema, idempotencyKeySchema, idParamSchema, listCollectionsQuerySchema, listVisitsQuerySchema, reviewCollectionSchema, reverseCollectionSchema, submitCollectionSchema, updateCollectionSchema, visitSchema, } from './collections.schemas.js';
+import { allocateShortPayment, approveEmergencyCollection, bulkReviewCollections, deleteDuplicateCollection, getCollectionStatus, getCollectionTotals, listCollections, listVisits, recordVisit, reviewCollection, reverseCollection, submitCollection, updateCollection, } from './collections.service.js';
+import { allocateCollectionSchema, bulkReviewCollectionSchema, collectionTotalsQuerySchema, deleteDuplicateSchema, emergencyApprovalSchema, idempotencyKeySchema, idParamSchema, listCollectionsQuerySchema, listVisitsQuerySchema, reviewCollectionSchema, reverseCollectionSchema, submitCollectionSchema, updateCollectionSchema, visitSchema, } from './collections.schemas.js';
 /**
  * Doorstep collections HTTP surface (docs/backend-master-spec.md §14).
  *
@@ -127,6 +127,13 @@ collectionsRouter.post('/emergency-approval', authenticate, requireRole('managin
     const input = request.body;
     const collection = await approveEmergencyCollection(actor, input, requestMeta(request));
     response.status(201).json(collection);
+});
+// POST /api/v1/collections/bulk-review — bulk review of multiple waiting submissions.
+collectionsRouter.post('/bulk-review', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(bulkReviewCollectionSchema), async (request, response) => {
+    const actor = authOf(request);
+    const input = request.body;
+    const result = await bulkReviewCollections(actor, input, requestMeta(request));
+    response.status(200).json(result);
 });
 // POST /api/v1/collections/:id/review — accepts / rejects / escalates a
 // waiting submission (spec §14.5).

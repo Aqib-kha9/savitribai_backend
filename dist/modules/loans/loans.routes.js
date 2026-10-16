@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authenticate, requirePermission, requireRole } from '../../middleware/auth.js';
 import { parse, validateBody } from '../../middleware/validate.js';
 import { UnauthorizedError } from '../../core/errors.js';
-import { listProducts, createProduct, listApplications, listLoans, createApplication, cancelApplication, updateApplication, recommendApplication, approveApplication, disburseLoan, getLoan, getSchedule, recordRepayment, correctRepayment, rescheduleLoan, settleLoan, writeOffLoan, transferLoan, grantWaiver, releaseSurplus, getStatements, } from './loans.service.js';
+import { listProducts, createProduct, listApplications, listLoans, createApplication, cancelApplication, purgeApplication, updateApplication, recommendApplication, approveApplication, disburseLoan, getLoan, getSchedule, recordRepayment, correctRepayment, rescheduleLoan, settleLoan, writeOffLoan, transferLoan, grantWaiver, releaseSurplus, getStatements, } from './loans.service.js';
 import { createProductSchema, listProductsQuerySchema, createApplicationSchema, cancelApplicationSchema, updateApplicationSchema, listApplicationsQuerySchema, listLoansQuerySchema, recommendSchema, approveSchema, disburseSchema, recordRepaymentSchema, correctRepaymentSchema, rescheduleSchema, settleSchema, writeOffSchema, transferSchema, waiverSchema, surplusReleaseSchema, scheduleQuerySchema, statementsQuerySchema, idParamSchema, uuidSchema, } from './loans.schemas.js';
 /**
  * Loans HTTP surface (docs/backend-master-spec.md §12).
@@ -125,10 +125,15 @@ loansRouter.post('/applications/:id/cancel', authenticate, requirePermission('lo
     const application = await cancelApplication(actor, applicationIdParam(request), input, requestMeta(request));
     response.status(200).json(application);
 });
-// DELETE /api/v1/loans/applications/:id — cancel/delete an undisbursed application
+// DELETE /api/v1/loans/applications/:id — cancel/delete an undisbursed application (or purge if purge=true)
 loansRouter.delete('/applications/:id', authenticate, requirePermission('loans.write'), async (request, response) => {
     const actor = authOf(request);
+    const purge = request.query?.purge === 'true';
     const reason = request.body?.reason || request.query?.reason || 'Cancelled by loan officer';
+    if (purge && ['president', 'vice_president', 'managing_director', 'super_admin'].includes(actor.role)) {
+        const result = await purgeApplication(actor, applicationIdParam(request), reason, requestMeta(request));
+        return response.status(200).json(result);
+    }
     const application = await cancelApplication(actor, applicationIdParam(request), { reason }, requestMeta(request));
     response.status(200).json(application);
 });

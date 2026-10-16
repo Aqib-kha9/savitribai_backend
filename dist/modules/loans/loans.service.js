@@ -693,6 +693,9 @@ export async function listApplications(actor, queryInput, meta = {}) {
     if (queryInput.customerId) {
         where.push(`la.customer_id = ${addParam(queryInput.customerId)}`);
     }
+    else {
+        where.push(`c.status != 'deleted'`);
+    }
     if (queryInput.productId) {
         where.push(`la.product_id = ${addParam(queryInput.productId)}`);
     }
@@ -736,6 +739,9 @@ export async function listLoans(actor, queryInput, meta = {}) {
     }
     if (queryInput.customerId) {
         where.push(`l.customer_id = ${addParam(queryInput.customerId)}`);
+    }
+    else {
+        where.push(`c.status != 'deleted'`);
     }
     if (queryInput.productId) {
         where.push(`l.product_id = ${addParam(queryInput.productId)}`);
@@ -1000,6 +1006,39 @@ export async function cancelApplication(actor, applicationId, input, meta = {}) 
         return loadLoanApplication(client, applicationId);
     });
     return updated;
+}
+/**
+ * Permanently purge a mistakenly created undisbursed loan application.
+ * Only permitted for applications that never had an active disbursed loan.
+ */
+export async function purgeApplication(actor, applicationId, reason, meta = {}) {
+    return transaction(async (client) => {
+        const application = await selectLoanApplicationById(client, applicationId);
+        if (!application)
+            throw new NotFoundError('Loan application');
+        if (application.status === 'disbursed') {
+            throw new BusinessRuleError('Cannot purge a disbursed loan application. Settle or write-off the loan instead.', 'APPLICATION_DISBURSED');
+        }
+        const disbursedCheck = await client.query(`SELECT id FROM loan WHERE application_id = $1 LIMIT 1`, [applicationId]);
+        if (disbursedCheck.rows[0]) {
+            throw new BusinessRuleError('Cannot purge an application that has an active loan account.', 'LOAN_EXISTS');
+        }
+        await audit(client, {
+            ...actorAuditBase(actor),
+            requestId: meta.requestId ?? null,
+            action: 'loan.application_purged',
+            entityType: 'loan_application',
+            entityId: applicationId,
+            metadata: {
+                applicationNumber: application.application_number,
+                customerId: application.customer_id,
+                reason,
+                purgedBy: actor.staffId,
+            },
+        });
+        await client.query(`DELETE FROM loan_application WHERE id = $1`, [applicationId]);
+        return { success: true, applicationNumber: application.application_number };
+    });
 }
 /**
  * Update details of an undisbursed loan application.

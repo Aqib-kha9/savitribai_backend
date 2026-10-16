@@ -11,6 +11,7 @@ import {
   listLoans,
   createApplication,
   cancelApplication,
+  purgeApplication,
   updateApplication,
   recommendApplication,
   approveApplication,
@@ -233,14 +234,19 @@ loansRouter.post(
   },
 );
 
-// DELETE /api/v1/loans/applications/:id — cancel/delete an undisbursed application
+// DELETE /api/v1/loans/applications/:id — cancel/delete an undisbursed application (or purge if purge=true)
 loansRouter.delete(
   '/applications/:id',
   authenticate,
   requirePermission('loans.write'),
   async (request, response) => {
     const actor = authOf(request);
+    const purge = request.query?.purge === 'true';
     const reason = (request.body?.reason as string) || (request.query?.reason as string) || 'Cancelled by loan officer';
+    if (purge && ['president', 'vice_president', 'managing_director', 'super_admin'].includes(actor.role)) {
+      const result = await purgeApplication(actor, applicationIdParam(request), reason, requestMeta(request));
+      return response.status(200).json(result);
+    }
     const application = await cancelApplication(actor, applicationIdParam(request), { reason }, requestMeta(request));
     response.status(200).json(application);
   },

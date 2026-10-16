@@ -119,6 +119,13 @@ export function daysBetween(from: string, to: string): number {
   return Math.round((parseDateString(to).getTime() - parseDateString(from).getTime()) / 86_400_000);
 }
 
+/** Calendar months between two YYYY-MM-DD dates (inclusive of whole month differences). */
+export function monthsBetween(from: string, to: string): number {
+  const start = parseDateString(from);
+  const end = parseDateString(to);
+  return (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + (end.getUTCMonth() - start.getUTCMonth());
+}
+
 /** Financial year (1 April – 31 March) label for an IST date, e.g. 2026-27. */
 export function financialYearLabel(dateString: string): string {
   const date = parseDateString(dateString);

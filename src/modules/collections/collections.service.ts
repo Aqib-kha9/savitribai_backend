@@ -25,6 +25,7 @@ import {
 } from '../sync/sync.service.js';
 import type {
   AllocateCollectionInput,
+  BulkReviewCollectionInput,
   CollectionTotalsQuery,
   DeleteDuplicateInput,
   EmergencyApprovalInput,
@@ -1136,6 +1137,95 @@ export async function reviewCollection(
     const updated = await selectCollectionById(client, id);
     if (!updated) throw new NotFoundError('Collection');
     return toCollectionView(updated);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Bulk review (POST /collections/bulk-review) — managing_director, manager, president
+// ---------------------------------------------------------------------------
+
+export interface BulkReviewResult {
+  processedCount: number;
+  decision: string;
+  ids: string[];
+}
+
+export async function bulkReviewCollections(
+  actor: AuthContext,
+  input: BulkReviewCollectionInput,
+  meta: RequestMeta = {},
+): Promise<BulkReviewResult> {
+  return transaction<BulkReviewResult>(async (client) => {
+    const rows = await client.query<{
+      id: string;
+      status: string;
+      is_deleted: boolean;
+      customer_id: string;
+      agent_id: string;
+      business_date: string;
+    }>(
+      `SELECT id, status, is_deleted, customer_id, agent_id, business_date
+         FROM collection_entry
+        WHERE id = ANY($1::uuid[])`,
+      [input.ids],
+    );
+
+    const eligible = rows.rows.filter(
+      (r) => !r.is_deleted && (r.status === 'waiting' || r.status === 'requiresReview'),
+    );
+
+    if (eligible.length === 0) {
+      return {
+        processedCount: 0,
+        decision: input.decision,
+        ids: [],
+      };
+    }
+
+    const eligibleIds = eligible.map((r) => r.id);
+
+    await client.query(
+      `UPDATE collection_entry
+          SET status = $2, updated_at = now()
+        WHERE id = ANY($1::uuid[])`,
+      [eligibleIds, input.decision],
+    );
+
+    for (const row of eligible) {
+      await client.query(
+        `INSERT INTO collection_review (collection_id, reviewed_by, decision, remarks)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (collection_id)
+         DO UPDATE SET decision = EXCLUDED.decision,
+                       remarks = EXCLUDED.remarks,
+                       reviewed_by = EXCLUDED.reviewed_by,
+                       reviewed_at = now()`,
+        [row.id, actor.staffId, input.decision, input.remarks ?? null],
+      );
+
+      await audit(client, {
+        ...actorAuditBase(actor),
+        requestId: meta.requestId ?? null,
+        action: AUDIT_ACTIONS.COLLECTION_REVIEWED,
+        entityType: 'collection_entry',
+        entityId: row.id,
+        businessDate: row.business_date,
+        metadata: {
+          decision: input.decision,
+          previousStatus: row.status,
+          remarks: input.remarks ?? null,
+          customerId: row.customer_id,
+          agentId: row.agent_id,
+          bulkReview: true,
+        },
+      });
+    }
+
+    return {
+      processedCount: eligible.length,
+      decision: input.decision,
+      ids: eligibleIds,
+    };
   });
 }
 

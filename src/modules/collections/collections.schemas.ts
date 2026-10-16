@@ -226,6 +226,14 @@ export const reviewCollectionSchema = z.object({
 });
 export type ReviewCollectionInput = z.infer<typeof reviewCollectionSchema>;
 
+/** Bulk review of submitted collections — POST /bulk-review. */
+export const bulkReviewCollectionSchema = z.object({
+  ids: z.array(uuidSchema).min(1, 'At least one collection id is required').max(500),
+  decision: reviewDecisionSchema,
+  remarks: z.string().trim().max(1000).optional(),
+});
+export type BulkReviewCollectionInput = z.infer<typeof bulkReviewCollectionSchema>;
+
 /**
  * Reversal of a disputed collection — POST /:id/reverse (spec §14.5). A
  * dispute is resolved with proof of record and implemented as reversal +

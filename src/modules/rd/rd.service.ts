@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import { query, transaction } from '../../database/client.js';
 import { appendAuditEvent, AUDIT_ACTIONS, type AuditEventInput } from '../../audit/audit-writer.js';
-import { addDays, addMonths, istBusinessDate, isSunday } from '../../core/time.js';
+import { addDays, addMonths, istBusinessDate, isSunday, monthsBetween } from '../../core/time.js';
 import { BadRequestError, BusinessRuleError, ConflictError, NotFoundError } from '../../core/errors.js';
 import type { AuthContext } from '../../types/auth-context.js';
 import { allocateSequence } from '../../database/numbering.js';
@@ -536,15 +536,31 @@ function nextDueDate(date: string, frequency: RdFrequency): string {
   }
 }
 
+export function getExpectedInstallmentCount(frequency: RdFrequency, durationMonths: number): number {
+  switch (frequency) {
+    case 'daily':
+      return durationMonths === 6 ? 180 : Math.round(durationMonths * 30);
+    case 'weekly':
+      return Math.round((durationMonths * 52) / 12);
+    case 'quarterly':
+      return Math.max(1, Math.round(durationMonths / 3));
+    case 'monthly':
+    default:
+      return Math.max(1, durationMonths);
+  }
+}
+
 /**
- * Generate due dates from `start` (inclusive) at `frequency` until the cursor
- * passes `end`. Sunday due dates are shifted to the next working day without
- * disturbing the underlying date grid, so the term length is preserved.
+ * Generate due dates from `start` (inclusive) at `frequency` until the maturity
+ * date `end` is reached (exclusive, as maturity date is the payout date) or
+ * `expectedCount` is satisfied. Sunday due dates are shifted to the next working
+ * day without disturbing the underlying date grid, so the term length is preserved.
  */
-function generateInstalmentDates(start: string, end: string, frequency: RdFrequency): string[] {
+function generateInstalmentDates(start: string, end: string, frequency: RdFrequency, expectedCount?: number): string[] {
   const dates: string[] = [];
   let cursor = start;
-  while (cursor <= end && dates.length < MAX_SCHEDULE_INSTALMENTS) {
+  const max = expectedCount ?? MAX_SCHEDULE_INSTALMENTS;
+  while (cursor < end && dates.length < max) {
     dates.push(toWorkingDay(cursor));
     cursor = nextDueDate(cursor, frequency);
   }
@@ -1194,7 +1210,9 @@ export async function openAccount(
       );
     }
 
-    const dueDates = generateInstalmentDates(firstDueDate, maturityDate, input.frequency);
+    const termMonths = input.durationMonths ?? Math.max(1, monthsBetween(firstDueDate, maturityDate));
+    const expectedCount = getExpectedInstallmentCount(input.frequency, termMonths);
+    const dueDates = generateInstalmentDates(firstDueDate, maturityDate, input.frequency, expectedCount);
     if (dueDates.length === 0) {
       throw new BusinessRuleError('No instalments can be scheduled for this term', 'SCHEDULE_EMPTY');
     }
@@ -1753,7 +1771,12 @@ export async function rescheduleAccount(
       [accountId, newAmount ?? account.instalment_amount, numbers, newDates],
     );
 
-    const newMaturityDate = newDates[newDates.length - 1] ?? account.maturity_date;
+    const lastDate = newDates[newDates.length - 1];
+    const newMaturityDate = lastDate
+      ? (account.maturity_date && account.maturity_date > lastDate
+          ? account.maturity_date
+          : nextDueDate(lastDate, account.frequency as RdFrequency))
+      : account.maturity_date;
     await client.query(
       `UPDATE rd_account
           SET instalment_amount = $1::numeric,
