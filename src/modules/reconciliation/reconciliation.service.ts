@@ -6,12 +6,11 @@ import {
   AUDIT_ACTIONS,
   type AuditEventInput,
 } from '../../audit/audit-writer.js';
-import { istBusinessDate, isPastIstDeadline } from '../../core/time.js';
+import { istBusinessDate } from '../../core/time.js';
 import {
   BadRequestError,
   BusinessRuleError,
   ConflictError,
-  DeadlineExceededError,
   NotFoundError,
 } from '../../core/errors.js';
 import type { AuthContext } from '../../types/auth-context.js';
@@ -72,11 +71,6 @@ import type {
 // ---------------------------------------------------------------------------
 // Deadlines & module vocabulary
 // ---------------------------------------------------------------------------
-
-/** Cash handover deadline — 16:00 IST (spec §16.5). */
-const CASH_HANDOVER_DEADLINE_HOUR = 16;
-/** Agent day-close submission deadline — 17:00 IST (spec §16.5). */
-const SUBMISSION_DEADLINE_HOUR = 17;
 
 /**
  * Module-local audit vocabulary. The shared AUDIT_ACTIONS table keeps only
@@ -999,11 +993,7 @@ export async function submitDayClose(
       );
     }
 
-    if (isPastIstDeadline(SUBMISSION_DEADLINE_HOUR)) {
-      throw new DeadlineExceededError(
-        `Day close must be submitted before ${SUBMISSION_DEADLINE_HOUR}:00 IST`,
-      );
-    }
+    // Day close submission deadline check removed per client requirement so day close can be submitted anytime
 
     const totalsResult = await client.query<DayTotalsTextRow>(DAY_TOTALS_SQL, [
       agent.id,
@@ -1111,11 +1101,7 @@ export async function recordHandover(
       assertDayCloseMutable(existing.status, 'recording a cash handover');
     }
 
-    if (isPastIstDeadline(CASH_HANDOVER_DEADLINE_HOUR)) {
-      throw new DeadlineExceededError(
-        `Cash handover must be recorded before ${CASH_HANDOVER_DEADLINE_HOUR}:00 IST`,
-      );
-    }
+    // Cash handover deadline check removed per client requirement
 
     // The agent cannot hand over more cash than was collected that day. A lower
     // declaration is allowed and, if genuine, is flagged by the cashier count.
@@ -1238,11 +1224,7 @@ export async function recordDenominations(
         'HANDOVER_ALREADY_COUNTED',
       );
     }
-    if (isPastIstDeadline(CASH_HANDOVER_DEADLINE_HOUR)) {
-      throw new DeadlineExceededError(
-        `Denominations must be recorded before ${CASH_HANDOVER_DEADLINE_HOUR}:00 IST`,
-      );
-    }
+    // Denominations deadline check removed per client requirement
 
     await client.query(
       `DELETE FROM denomination_breakup WHERE cash_handover_id = $1`,

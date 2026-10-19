@@ -5,12 +5,11 @@ import {
   AUDIT_ACTIONS,
   type AuditEventInput,
 } from '../../audit/audit-writer.js';
-import { istBusinessDate, isPastIstDeadline } from '../../core/time.js';
+import { istBusinessDate } from '../../core/time.js';
 import {
   BadRequestError,
   BusinessRuleError,
   ConflictError,
-  DeadlineExceededError,
   NotFoundError,
 } from '../../core/errors.js';
 import type { AuthContext } from '../../types/auth-context.js';
@@ -71,9 +70,6 @@ export interface RequestMeta {
 const ACTION_AGENT_UPDATED = 'agents.agent.updated';
 const ACTION_OUT_OF_AREA_APPROVED = 'agents.agent.out_of_area_approved';
 const ACTION_FIELD_VERIFICATION_RECORDED = 'agents.field_verification.recorded';
-
-/** Submission deadline for day close — 17:00 IST (spec §14.5/§16.5). */
-const SUBMISSION_DEADLINE_HOUR = 17;
 
 // ---------------------------------------------------------------------------
 // Local audit helpers (same transaction as the mutation — spec §6.3)
@@ -1454,13 +1450,7 @@ export async function submitDayClose(
   const agent = await resolveAgent(actor);
   assertAgentOperational(agent);
   const businessDate = input.businessDate ?? istBusinessDate();
-
-  if (isPastIstDeadline(SUBMISSION_DEADLINE_HOUR)) {
-    throw new DeadlineExceededError(
-      `Day close must be submitted before ${SUBMISSION_DEADLINE_HOUR}:00 IST`,
-    );
-  }
-
+  // Day close submission deadline check removed per client requirement so day close can be submitted anytime
   return transaction<DayCloseResult>(async (client) => {
     const existing = await client.query<{ id: string; status: string }>(
       `SELECT id, status FROM day_close WHERE agent_id = $1 AND business_date = $2`,

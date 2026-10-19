@@ -1,45 +1,10 @@
 import { query, transaction } from '../../database/client.js';
 import { randomUUID } from 'node:crypto';
 import { appendAuditEvent, AUDIT_ACTIONS, } from '../../audit/audit-writer.js';
-import { istBusinessDate, isPastIstDeadline } from '../../core/time.js';
-import { BadRequestError, BusinessRuleError, ConflictError, DeadlineExceededError, NotFoundError, } from '../../core/errors.js';
+import { istBusinessDate } from '../../core/time.js';
+import { BadRequestError, BusinessRuleError, ConflictError, NotFoundError, } from '../../core/errors.js';
 import { allocateSequence } from '../../database/numbering.js';
 import { evaluateOfflineLate, lookupCollectionReplay, lookupVisitReplay, } from '../sync/sync.service.js';
-/**
- * Doorstep collections service (docs/backend-master-spec.md §14).
- *
- * This module is the OFFICE GATEWAY for the doorstep-collection lifecycle: it
- * records agent submissions and visits (replay-safe push paths shared with the
- * sync protocol §20), tracks office review / reversal / duplicate / short-payment
- * decisions, issues the mandatory receipt for every collection (§14.3), and
- * serves the office list + total-amount report.
- *
- * Accepted-collection postings are NOT performed here. Downstream product
- * modules (rd / loans / deposits) reference `collection_entry_id`
- * (rd_instalment.collection_entry_id) when they post an accepted collection to
- * the product ledger; this module records status / review / reversal records
- * and receipts only. The reconciliation module (§16) nets accepted entries
- * against collection_reversal rows.
- *
- * Receipts are issued from the central number sequences (§4) seeded as
- * `receipt_daily` (RCPT-D, resets daily) and `receipt_monthly` (RCPT-M,
- * resets monthly). `collection_receipt` is APPEND-ONLY (reject_mutation trigger)
- * — a duplicate deletion soft-deletes the collection_entry only and a dispute
- * reversal inserts a NEW corrected entry + a NEW receipt; receipts are never
- * updated or deleted.
- *
- * Deadlines (IST): cash handover is 16:00 (§14.1) and submission is 17:00
- * (§14.5/§16.5). The server enforces 17:00 on submitCollection AFTER the
- * idempotent-replay check — replays always succeed, mirroring agents.submitDayClose.
- * recordVisit is NOT deadline-gated (visit evidence is not money). The 16:00 cash
- * handover itself is enforced by the reconciliation module (§16), not here.
- *
- * Shared protocol helpers (replay lookups + evaluateOfflineLate) are imported
- * from the sync module; resolveAgent / assertAgentOperational are copied here
- * because sync's resolveAgent and agents' helpers are module-private.
- */
-// Submission deadline for collections — 17:00 IST (spec §14.5/§16.5).
-const SUBMISSION_DEADLINE_HOUR = 17;
 // ---------------------------------------------------------------------------
 // Local audit helpers (same transaction as the mutation — spec §6.3)
 // ---------------------------------------------------------------------------
@@ -430,18 +395,27 @@ async function insertCollectionEntry(client, p) {
         receiptSeq = 'receipt_sb';
     }
     let sequence;
-    try {
-        sequence = await allocateSequence(client, receiptSeq);
-    }
-    catch {
-        sequence = await allocateSequence(client, p.receiptKind === 'monthly' ? 'receipt_monthly' : 'receipt_daily');
+    let receiptNumber = '';
+    // Try up to 50 times to allocate a strictly non-colliding receipt number
+    for (let attempt = 0; attempt < 50; attempt++) {
+        try {
+            sequence = await allocateSequence(client, receiptSeq);
+        }
+        catch {
+            sequence = await allocateSequence(client, p.receiptKind === 'monthly' ? 'receipt_monthly' : 'receipt_daily');
+        }
+        receiptNumber = sequence.formatted;
+        const exists = await client.query(`SELECT 1 FROM collection_receipt WHERE receipt_number = $1 LIMIT 1`, [receiptNumber]);
+        if (!exists.rows[0]) {
+            break;
+        }
     }
     await client.query(`INSERT INTO collection_receipt
        (collection_id, receipt_number, receipt_kind, agent_code, customer_name,
         account_number, product_label, amount, mode, instrument_ref, acknowledged)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`, [
         row.id,
-        sequence.formatted,
+        receiptNumber,
         p.receiptKind,
         p.agentCode,
         p.customerName,
@@ -460,16 +434,14 @@ async function insertCollectionEntry(client, p) {
 export async function submitCollection(actor, input, idempotencyKey, meta = {}) {
     const agent = await resolveAgent(actor);
     assertAgentOperational(agent);
-    // Idempotent replay — returns the ORIGINAL result BEFORE the deadline gate so
+    // Idempotent replay — returns the ORIGINAL result BEFORE any gate so
     // retries always succeed (spec §20.3.2), mirroring agents.submitDayClose.
     const replay = await lookupCollectionReplay(agent.id, idempotencyKey);
     if (replay) {
         const submission = await loadSubmissionReplay(agent.id, replay);
         return { created: false, submission };
     }
-    if (isPastIstDeadline(SUBMISSION_DEADLINE_HOUR)) {
-        throw new DeadlineExceededError(`Collections must be submitted before ${SUBMISSION_DEADLINE_HOUR}:00 IST`);
-    }
+    // Submission deadline check removed per client requirement so agents can submit at any hour
     const businessDate = input.businessDate ?? istBusinessDate();
     try {
         return await transaction(async (client) => {

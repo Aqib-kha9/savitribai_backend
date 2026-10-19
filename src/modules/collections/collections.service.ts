@@ -6,12 +6,11 @@ import {
   AUDIT_ACTIONS,
   type AuditEventInput,
 } from '../../audit/audit-writer.js';
-import { istBusinessDate, isPastIstDeadline } from '../../core/time.js';
+import { istBusinessDate } from '../../core/time.js';
 import {
   BadRequestError,
   BusinessRuleError,
   ConflictError,
-  DeadlineExceededError,
   NotFoundError,
 } from '../../core/errors.js';
 import type { AuthContext } from '../../types/auth-context.js';
@@ -78,9 +77,6 @@ import type {
  * from the sync module; resolveAgent / assertAgentOperational are copied here
  * because sync's resolveAgent and agents' helpers are module-private.
  */
-
-// Submission deadline for collections — 17:00 IST (spec §14.5/§16.5).
-const SUBMISSION_DEADLINE_HOUR = 17;
 
 // ---------------------------------------------------------------------------
 // Shared contract types / module vocabulary
@@ -816,13 +812,25 @@ async function insertCollectionEntry(
   }
 
   let sequence;
-  try {
-    sequence = await allocateSequence(client, receiptSeq);
-  } catch {
-    sequence = await allocateSequence(
-      client,
-      p.receiptKind === 'monthly' ? 'receipt_monthly' : 'receipt_daily',
+  let receiptNumber = '';
+  // Try up to 50 times to allocate a strictly non-colliding receipt number
+  for (let attempt = 0; attempt < 50; attempt++) {
+    try {
+      sequence = await allocateSequence(client, receiptSeq);
+    } catch {
+      sequence = await allocateSequence(
+        client,
+        p.receiptKind === 'monthly' ? 'receipt_monthly' : 'receipt_daily',
+      );
+    }
+    receiptNumber = sequence.formatted;
+    const exists = await client.query(
+      `SELECT 1 FROM collection_receipt WHERE receipt_number = $1 LIMIT 1`,
+      [receiptNumber],
     );
+    if (!exists.rows[0]) {
+      break;
+    }
   }
   await client.query(
     `INSERT INTO collection_receipt
@@ -831,7 +839,7 @@ async function insertCollectionEntry(
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       row.id,
-      sequence.formatted,
+      receiptNumber,
       p.receiptKind,
       p.agentCode,
       p.customerName,
@@ -859,7 +867,7 @@ export async function submitCollection(
   const agent = await resolveAgent(actor);
   assertAgentOperational(agent);
 
-  // Idempotent replay — returns the ORIGINAL result BEFORE the deadline gate so
+  // Idempotent replay — returns the ORIGINAL result BEFORE any gate so
   // retries always succeed (spec §20.3.2), mirroring agents.submitDayClose.
   const replay = await lookupCollectionReplay(agent.id, idempotencyKey);
   if (replay) {
@@ -867,11 +875,7 @@ export async function submitCollection(
     return { created: false, submission };
   }
 
-  if (isPastIstDeadline(SUBMISSION_DEADLINE_HOUR)) {
-    throw new DeadlineExceededError(
-      `Collections must be submitted before ${SUBMISSION_DEADLINE_HOUR}:00 IST`,
-    );
-  }
+  // Submission deadline check removed per client requirement so agents can submit at any hour
 
   const businessDate = input.businessDate ?? istBusinessDate();
 

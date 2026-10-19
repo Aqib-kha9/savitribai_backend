@@ -26,6 +26,7 @@ import { notificationsRouter } from './modules/notifications/notifications.route
 import { scheduleEODJobs } from './core/jobs/scheduler.js';
 import { settingsRouter } from './modules/settings/settings.routes.js';
 import { dashboardRouter } from './modules/dashboard/dashboard.routes.js';
+import { query } from './database/client.js';
 
 const app = express();
 
@@ -118,9 +119,52 @@ app.use('/api/v1/dashboard', dashboardRouter);
 app.use(notFoundHandler);
 app.use(errorHandler);
 
+async function runSelfHealingMigrations(): Promise<void> {
+  try {
+    await query(`
+      UPDATE number_sequence 
+         SET reset_period = 'never' 
+       WHERE entity_type LIKE 'receipt_%';
+    `);
+
+    const sequences = [
+      { type: 'receipt_loan', prefix: 'RCPT-LN' },
+      { type: 'receipt_rd', prefix: 'RCPT-RD' },
+      { type: 'receipt_dd', prefix: 'RCPT-DD' },
+      { type: 'receipt_sb', prefix: 'RCPT-SB' },
+      { type: 'receipt_daily', prefix: 'RCPT-D' },
+      { type: 'receipt_monthly', prefix: 'RCPT-M' },
+    ];
+
+    for (const seq of sequences) {
+      const res = await query<{ max_val: string }>(
+        `SELECT MAX(SUBSTRING(receipt_number FROM '[0-9]+')::BIGINT) as max_val
+           FROM collection_receipt
+          WHERE receipt_number LIKE $1`,
+        [`${seq.prefix}%`],
+      );
+      const maxVal = res.rows[0]?.max_val ? Number(res.rows[0].max_val) : 0;
+      if (maxVal > 0) {
+        await query(
+          `UPDATE number_sequence
+              SET next_value = GREATEST(next_value, $1 + 1)
+            WHERE entity_type = $2`,
+          [maxVal, seq.type],
+        );
+      }
+    }
+    console.log('Self-healing migrations: receipt sequences configured to never reset & synced.');
+  } catch (err) {
+    console.warn('Self-healing migration notice:', err);
+  }
+}
+
 app.listen(env.port, async () => {
   console.log(`API listening on port ${env.port}`);
   
+  // Self-heal sequence monotonicity and collision resilience
+  await runSelfHealingMigrations();
+
   // Initialize BullMQ EOD schedules
   if (env.isProduction || env.nodeEnv === 'development') {
     await scheduleEODJobs();
