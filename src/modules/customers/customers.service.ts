@@ -1376,6 +1376,7 @@ export async function updateCustomer(
     if (input.guardianPhone !== undefined) push('guardian_phone', input.guardianPhone);
     if (input.kycMethod !== undefined) push('kyc_method', input.kycMethod);
     if (input.registrationDate !== undefined) push('registration_date', input.registrationDate);
+    if (input.membershipCategory !== undefined) push('membership_category', input.membershipCategory);
 
     if (sets.length > 0) {
       await client.query(`UPDATE customer SET ${sets.join(', ')}, updated_at = now() WHERE id = $${values.length + 1}`, [

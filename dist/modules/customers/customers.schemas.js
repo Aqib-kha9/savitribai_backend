@@ -110,6 +110,7 @@ export const updateCustomerSchema = z.object({
     guardianPhone: z.string().trim().max(20).nullable().optional(),
     kycMethod: z.string().trim().max(40).optional(),
     registrationDate: dateOnlySchema.optional(),
+    membershipCategory: membershipCategorySchema.optional(),
     addresses: z.array(addressSchema).optional(),
     identityDocuments: z.array(identityDocumentSchema).optional(),
 });
