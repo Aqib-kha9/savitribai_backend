@@ -743,7 +743,7 @@ export async function getMyAssignments(actor, _meta = {}) {
             ra.account_number,
             ra.instalment_amount::float8 AS instalment_amount,
             ra.pending_amount::float8     AS pending_amount,
-            ra.current_balance::float8   AS current_balance,
+            ra.total_paid::float8        AS total_paid,
             ra.frequency
        FROM rd_account ra
       WHERE ra.customer_id = ANY($1::uuid[]) AND ra.status IN ('active', 'overdue')`, [customerIds]);
@@ -797,7 +797,8 @@ export async function getMyAssignments(actor, _meta = {}) {
             installmentAmount: row.instalment_amount,
             outstandingAmount: row.pending_amount ?? 0,
             frequency: row.frequency,
-            currentBalance: row.current_balance ?? 0,
+            totalPaid: row.total_paid ?? 0,
+            currentBalance: row.total_paid ?? 0,
         });
         productsByCustomer.set(row.customer_id, bucket);
     }
