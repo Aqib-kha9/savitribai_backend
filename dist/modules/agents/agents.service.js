@@ -732,6 +732,7 @@ export async function getMyAssignments(actor, _meta = {}) {
     }
     // Active savings accounts and daily deposit accounts.
     const savings = await query(`SELECT sa.id, sa.customer_id, sa.account_number,
+            sa.current_balance::float8 AS current_balance,
             dp.code AS product_code, dp.name AS product_name
        FROM savings_account sa
        LEFT JOIN deposit_product dp ON dp.id = sa.product_id
@@ -742,6 +743,7 @@ export async function getMyAssignments(actor, _meta = {}) {
             ra.account_number,
             ra.instalment_amount::float8 AS instalment_amount,
             ra.pending_amount::float8     AS pending_amount,
+            ra.current_balance::float8   AS current_balance,
             ra.frequency
        FROM rd_account ra
       WHERE ra.customer_id = ANY($1::uuid[]) AND ra.status IN ('active', 'overdue')`, [customerIds]);
@@ -751,6 +753,7 @@ export async function getMyAssignments(actor, _meta = {}) {
             l.loan_number AS account_number,
             l.approved_amount::float8    AS approved_amount,
             l.outstanding_amount::float8 AS outstanding_amount,
+            l.total_paid::float8         AS total_paid,
             l.repayment_frequency        AS frequency,
             COALESCE(
               (SELECT li.expected_amount::float8
@@ -781,6 +784,7 @@ export async function getMyAssignments(actor, _meta = {}) {
             installmentAmount: isDaily ? 100 : 0,
             outstandingAmount: 0,
             frequency: isDaily ? 'daily' : null,
+            currentBalance: row.current_balance ?? 0,
         });
         productsByCustomer.set(row.customer_id, bucket);
     }
@@ -793,6 +797,7 @@ export async function getMyAssignments(actor, _meta = {}) {
             installmentAmount: row.instalment_amount,
             outstandingAmount: row.pending_amount ?? 0,
             frequency: row.frequency,
+            currentBalance: row.current_balance ?? 0,
         });
         productsByCustomer.set(row.customer_id, bucket);
     }
@@ -806,6 +811,8 @@ export async function getMyAssignments(actor, _meta = {}) {
             outstandingAmount: row.outstanding_amount ?? 0,
             frequency: row.frequency,
             sanctionedAmount: row.approved_amount ?? 0,
+            totalPaid: row.total_paid ?? 0,
+            currentBalance: row.total_paid ?? 0,
         });
         productsByCustomer.set(row.customer_id, bucket);
     }

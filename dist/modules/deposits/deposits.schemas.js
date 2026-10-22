@@ -58,6 +58,7 @@ export const createAccountSchema = z.object({
     branchId: z.string().uuid('Invalid branch id'),
     openingAmount: amountSchema,
     openedOn: dateOnlySchema.optional(),
+    maturityDate: dateOnlySchema.optional(),
     interestRate: rateSchema.optional(),
     paymentMethod: paymentMethodSchema.default('cash'),
     referenceNumber: z.string().trim().max(60).optional(),
@@ -66,6 +67,7 @@ export const createAccountSchema = z.object({
 export const updateAccountSchema = z.object({
     productId: z.string().uuid('Invalid product id').optional(),
     interestRate: rateSchema.nullable().optional(),
+    maturityDate: dateOnlySchema.nullable().optional(),
 });
 export const freezeAccountSchema = z.object({
     reason: z.string().trim().min(1, 'A freeze reason is required').max(500),

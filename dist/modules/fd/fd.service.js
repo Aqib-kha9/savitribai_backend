@@ -149,6 +149,10 @@ function nextStep(date, frequency) {
  * where rateE4 = round(rate × 10_000).
  */
 function simpleInterest(deposit, rate, tenureMonths) {
+    // Damduppat scheme (दामदुप्पट योजना): at 72 months (6 years), returns double the principal (100% interest)
+    if (tenureMonths === 72 && Number(rate) >= 16.66 && Number(rate) <= 16.67) {
+        return fromCents(toCents(deposit));
+    }
     const rateE4 = BigInt(Math.round(Number(rate) * 10_000));
     const interestCents = (toCents(deposit) * rateE4 * BigInt(tenureMonths)) / 12000000n;
     return fromCents(interestCents);

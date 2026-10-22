@@ -1,6 +1,6 @@
 import { query, transaction } from '../../database/client.js';
 import { appendAuditEvent, AUDIT_ACTIONS } from '../../audit/audit-writer.js';
-import { istBusinessDate } from '../../core/time.js';
+import { istBusinessDate, addDays } from '../../core/time.js';
 import { BadRequestError, BusinessRuleError, ConflictError, NotFoundError } from '../../core/errors.js';
 import { allocateSequence } from '../../database/numbering.js';
 import { addMoney, subMoney, compareMoney, isZero, maxMoney, BUSINESS_RULES } from '../../core/money.js';
@@ -170,6 +170,7 @@ const ACCOUNT_SELECT = `
          sa.interest_rate::text AS interest_rate,
          sa.opened_by, op.full_name AS opened_by_name,
          sa.opened_on::text AS opened_on,
+         sa.maturity_date::text AS maturity_date,
          sa.approved_by, ap.full_name AS approved_by_name,
          sa.approved_on::text AS approved_on,
          sa.freeze_reason, sa.closed_on::text AS closed_on, sa.closure_reason,
@@ -207,6 +208,7 @@ function toAccountView(row) {
         openedBy: row.opened_by,
         openedByName: row.opened_by_name,
         openedOn: row.opened_on,
+        maturityDate: row.maturity_date ?? null,
         approvedBy: row.approved_by,
         approvedByName: row.approved_by_name,
         approvedOn: row.approved_on,
@@ -443,13 +445,17 @@ export async function createAccount(actor, input, meta = {}) {
         // product changes never rewrite a live account's ledger terms (variable
         // rates are applied by editing the account — spec §9.1).
         const interestRate = input.interestRate ?? product.interest_rate;
+        let maturityDate = input.maturityDate ?? null;
+        if (!maturityDate && (product.code === 'DAILY-180' || product.name.toLowerCase().includes('180') || isDaily)) {
+            maturityDate = addDays(openedOn, 180);
+        }
         let accountId;
         try {
             const insert = await client.query(`INSERT INTO savings_account
            (account_number, customer_id, product_id, branch_id, status,
-            current_balance, interest_rate, opened_by, opened_on)
-         VALUES ($1, $2, $3, $4, 'pending_approval', $5, $6, $7, $8)
-         RETURNING id`, [accountNumber, input.customerId, input.productId, input.branchId, input.openingAmount, interestRate, actor.staffId, openedOn]);
+            current_balance, interest_rate, opened_by, opened_on, maturity_date)
+         VALUES ($1, $2, $3, $4, 'pending_approval', $5, $6, $7, $8, $9)
+         RETURNING id`, [accountNumber, input.customerId, input.productId, input.branchId, input.openingAmount, interestRate, actor.staffId, openedOn, maturityDate]);
             const inserted = insert.rows[0];
             if (!inserted)
                 throw new Error('failed to create savings account');
@@ -606,6 +612,8 @@ export async function updateAccount(actor, accountId, input, meta = {}) {
             push('product_id', input.productId);
         if (input.interestRate !== undefined)
             push('interest_rate', input.interestRate);
+        if (input.maturityDate !== undefined)
+            push('maturity_date', input.maturityDate);
         if (sets.length > 0) {
             await client.query(`UPDATE savings_account SET ${sets.join(', ')}, updated_at = now() WHERE id = $${values.length + 1}`, [
                 ...values,

@@ -374,7 +374,7 @@ export const REFERENCE_ROWS: RefRow[] = [
   ['Category', 'Code / Value', 'Name / Meaning', 'Details'],
   ['Deposit products (sheet 6)', 'SAV-STD', 'Sanchay Bachat Khata (Standard Savings)', 'min opening 100.00; min balance 100.00; max balance 500000.00; flat; quarterly; 4.0000%; variable'],
   ['Deposit products (sheet 6)', 'SAV-DLY', 'Daily Savings Khata (Doorstep)', 'min opening 100.00; min balance 100.00; no max; flat; yearly; 4.0000%; variable'],
-  ['Deposit products (sheet 6)', 'DAILY-180', 'Daily 180-Day Account', 'min opening 50.00; min balance 50.00; no max; flat; yearly; 5.1500%; variable'],
+  ['Deposit products (sheet 6)', 'DAILY-180', 'Daily 180-Day Account', 'min opening 50.00; min balance 50.00; no max; flat; yearly; 4.0000%; variable'],
   ['RD schemes (sheet 7)', 'RD-DLY', 'Daily RD', 'daily; min instalment 100.00; no max; 6–24 months; 6.0000%; interest yearly'],
   ['RD schemes (sheet 7)', 'RD-MTH', 'Monthly RD', 'monthly; min instalment 500.00; max 50000.00; 6–120 months; 6.5000%; interest yearly'],
   ['FD rate card (sheet 8)', '1000.00–25000.00 / 2 mo', 'FD band', 'rate 7.0000%; penalty 1.00%; min holding 6 months'],

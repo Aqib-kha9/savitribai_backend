@@ -1186,7 +1186,12 @@ export async function openAccount(
       }
       maturityDate = input.maturityDate;
     } else if (input.durationMonths !== undefined) {
-      maturityDate = addMonths(firstDueDate, input.durationMonths);
+      if (input.frequency === 'daily' && input.durationMonths === 6) {
+        maturityDate = addDays(firstDueDate, 180);
+      } else {
+        // 12 months + 2 banking transaction days per client specification
+        maturityDate = addDays(addMonths(firstDueDate, input.durationMonths), 2);
+      }
     } else {
       throw new BusinessRuleError(
         'Provide either a maturityDate or a durationMonths term for the RD account',
@@ -1194,9 +1199,9 @@ export async function openAccount(
       );
     }
 
-    // Term must fall inside the scheme's duration window.
+    // Term must fall inside the scheme's duration window (allowing banking buffer days)
     const lowerBound = addMonths(firstDueDate, scheme.min_duration_months);
-    const upperBound = addMonths(firstDueDate, scheme.max_duration_months);
+    const upperBound = addDays(addMonths(firstDueDate, scheme.max_duration_months), 7);
     if (maturityDate < lowerBound) {
       throw new BusinessRuleError(
         `Term is below the scheme minimum of ${scheme.min_duration_months} months`,

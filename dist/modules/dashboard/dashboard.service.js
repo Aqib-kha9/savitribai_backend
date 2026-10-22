@@ -223,6 +223,94 @@ async function getRecentTransactionRows(limit) {
       LIMIT $1`, [limit]);
     return result.rows;
 }
+async function getBankTotals() {
+    const [savingsRows, rdRows, fdRows, loanRows] = await Promise.all([
+        query(`SELECT
+         CASE
+           WHEN dp.code IN ('DAILY-180', 'SAV-DLY') THEN 'daily_deposit'
+           ELSE 'savings'
+         END AS product_kind,
+         COUNT(*)::int AS count,
+         COALESCE(SUM(sa.current_balance), 0)::float8 AS balance
+       FROM savings_account sa
+       JOIN deposit_product dp ON dp.id = sa.product_id
+       WHERE sa.status IN ('active', 'pending_approval', 'frozen')
+       GROUP BY 1`),
+        query(`SELECT
+         COUNT(*)::int AS count,
+         COALESCE(SUM(total_paid), 0)::float8 AS balance
+       FROM rd_account
+       WHERE status IN ('active', 'overdue', 'completed')`),
+        query(`SELECT
+         COUNT(*)::int AS count,
+         COALESCE(SUM(deposit_amount), 0)::float8 AS balance
+       FROM fd_account
+       WHERE status IN ('active', 'under_lien', 'matured')`),
+        query(`SELECT
+         COUNT(*)::int AS count,
+         COALESCE(SUM(disbursed_amount), 0)::float8 AS disbursed,
+         COALESCE(SUM(total_paid), 0)::float8 AS collected,
+         COALESCE(SUM(outstanding_amount), 0)::float8 AS outstanding
+       FROM loan
+       WHERE status IN ('active', 'overdue', 'rescheduled')`),
+    ]);
+    let savingsCount = 0;
+    let savingsBalance = 0;
+    let ddCount = 0;
+    let ddBalance = 0;
+    for (const row of savingsRows.rows) {
+        if (row.product_kind === 'daily_deposit') {
+            ddCount += row.count;
+            ddBalance += row.balance;
+        }
+        else {
+            savingsCount += row.count;
+            savingsBalance += row.balance;
+        }
+    }
+    const rdCount = rdRows.rows[0]?.count ?? 0;
+    const rdBalance = rdRows.rows[0]?.balance ?? 0;
+    const fdCount = fdRows.rows[0]?.count ?? 0;
+    const fdBalance = fdRows.rows[0]?.balance ?? 0;
+    const loanCount = loanRows.rows[0]?.count ?? 0;
+    const loanDisbursed = loanRows.rows[0]?.disbursed ?? 0;
+    const loanCollected = loanRows.rows[0]?.collected ?? 0;
+    const loanOutstanding = loanRows.rows[0]?.outstanding ?? 0;
+    const totalDeposits = round2(savingsBalance + ddBalance + rdBalance + fdBalance);
+    const totalLoansOutstanding = round2(loanOutstanding);
+    const netBankBalance = round2(totalDeposits - totalLoansOutstanding);
+    const totalAccountsCount = savingsCount + ddCount + rdCount + fdCount + loanCount;
+    return {
+        totalDeposits,
+        totalLoansOutstanding,
+        netBankBalance,
+        totalAccountsCount,
+        breakdown: {
+            savings: {
+                accountCount: savingsCount,
+                totalBalance: round2(savingsBalance),
+            },
+            dailyDeposit: {
+                accountCount: ddCount,
+                totalBalance: round2(ddBalance),
+            },
+            recurringDeposit: {
+                accountCount: rdCount,
+                totalBalance: round2(rdBalance),
+            },
+            fixedDeposit: {
+                accountCount: fdCount,
+                totalBalance: round2(fdBalance),
+            },
+            loans: {
+                accountCount: loanCount,
+                totalDisbursed: round2(loanDisbursed),
+                totalCollected: round2(loanCollected),
+                totalOutstanding: round2(loanOutstanding),
+            },
+        },
+    };
+}
 export async function getDashboardOverview(actor, input, _meta = {}) {
     const date = input.date ?? istBusinessDate();
     const scope = await resolveScope(actor);
@@ -244,7 +332,8 @@ export async function getDashboardOverview(actor, input, _meta = {}) {
         agentParams.push(scope.agentId);
         agentWhere += ` AND a.id = $${agentParams.length}`;
     }
-    const [aggResult, modeResult, agentsResult, pendingCounts] = await Promise.all([
+    const canSeeBankTotals = actor.role !== 'collection_agent';
+    const [aggResult, modeResult, agentsResult, pendingCounts, bankTotals] = await Promise.all([
         query(`SELECT COUNT(*)::int AS "entryCount",
               COALESCE(SUM(ce.amount), 0)::float8 AS "totalAmount",
               COALESCE(SUM(ce.amount) FILTER (WHERE ce.mode = 'cash'), 0)::float8 AS "cashAmount",
@@ -271,6 +360,7 @@ export async function getDashboardOverview(actor, input, _meta = {}) {
          FROM agent a
         WHERE ${agentWhere}`, agentParams),
         countPendingItems(scope, kinds, date),
+        canSeeBankTotals ? getBankTotals() : Promise.resolve(undefined),
     ]);
     const agg = aggResult.rows[0] ?? {
         entryCount: 0,
@@ -309,6 +399,7 @@ export async function getDashboardOverview(actor, input, _meta = {}) {
         },
         pendingCounts,
         recentTransactions,
+        bankTotals,
     };
 }
 // ---------------------------------------------------------------------------

@@ -1141,6 +1141,8 @@ export interface AssignedProductView {
   outstandingAmount: number;
   frequency: string | null;
   sanctionedAmount?: number;
+  currentBalance?: number;
+  totalPaid?: number;
 }
 
 type CustomerAssignmentRow = {
@@ -1167,6 +1169,7 @@ type SavingsProductRow = {
   id: string;
   customer_id: string;
   account_number: string;
+  current_balance: number | null;
   product_code: string | null;
   product_name: string | null;
 };
@@ -1177,6 +1180,7 @@ type RdProductRow = {
   account_number: string;
   instalment_amount: number;
   pending_amount: number | null;
+  current_balance: number | null;
   frequency: string | null;
 };
 
@@ -1186,6 +1190,7 @@ type LoanProductRow = {
   account_number: string;
   approved_amount: number | null;
   outstanding_amount: number | null;
+  total_paid: number | null;
   frequency: string | null;
   instalment_amount: number | null;
 };
@@ -1248,6 +1253,7 @@ export async function getMyAssignments(
   // Active savings accounts and daily deposit accounts.
   const savings = await query<SavingsProductRow>(
     `SELECT sa.id, sa.customer_id, sa.account_number,
+            sa.current_balance::float8 AS current_balance,
             dp.code AS product_code, dp.name AS product_name
        FROM savings_account sa
        LEFT JOIN deposit_product dp ON dp.id = sa.product_id
@@ -1261,6 +1267,7 @@ export async function getMyAssignments(
             ra.account_number,
             ra.instalment_amount::float8 AS instalment_amount,
             ra.pending_amount::float8     AS pending_amount,
+            ra.current_balance::float8   AS current_balance,
             ra.frequency
        FROM rd_account ra
       WHERE ra.customer_id = ANY($1::uuid[]) AND ra.status IN ('active', 'overdue')`,
@@ -1273,6 +1280,7 @@ export async function getMyAssignments(
             l.loan_number AS account_number,
             l.approved_amount::float8    AS approved_amount,
             l.outstanding_amount::float8 AS outstanding_amount,
+            l.total_paid::float8         AS total_paid,
             l.repayment_frequency        AS frequency,
             COALESCE(
               (SELECT li.expected_amount::float8
@@ -1306,6 +1314,7 @@ export async function getMyAssignments(
       installmentAmount: isDaily ? 100 : 0,
       outstandingAmount: 0,
       frequency: isDaily ? 'daily' : null,
+      currentBalance: row.current_balance ?? 0,
     });
     productsByCustomer.set(row.customer_id, bucket);
   }
@@ -1318,6 +1327,7 @@ export async function getMyAssignments(
       installmentAmount: row.instalment_amount,
       outstandingAmount: row.pending_amount ?? 0,
       frequency: row.frequency,
+      currentBalance: row.current_balance ?? 0,
     });
     productsByCustomer.set(row.customer_id, bucket);
   }
@@ -1331,6 +1341,8 @@ export async function getMyAssignments(
       outstandingAmount: row.outstanding_amount ?? 0,
       frequency: row.frequency,
       sanctionedAmount: row.approved_amount ?? 0,
+      totalPaid: row.total_paid ?? 0,
+      currentBalance: row.total_paid ?? 0,
     });
     productsByCustomer.set(row.customer_id, bucket);
   }

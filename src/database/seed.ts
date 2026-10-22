@@ -143,7 +143,7 @@ const DEPOSIT_PRODUCTS = [
     maxBalance: null as string | null,
     interestMethod: 'flat' as const,
     interestFrequency: 'yearly' as const,
-    interestRate: '5.1500',
+    interestRate: '4.0000',
     ratePolicy: 'variable' as const,
   },
 ];
@@ -176,19 +176,20 @@ const RD_SCHEMES = [
 
 /**
  * FD rate card bands (spec §11): amounts ₹1,000–₹1,00,000.
- * Tenure tiers follow the bank's published card (client-approved image):
- *   30–45 days → 7%, 46–180 days → 8%, 181–365 days → 10%, 366+ days → 11.50%.
- * Because fd_rate_card.tenure_months is month-based only, the day-based tiers are
- * mapped to their month equivalents (1–2, 3–6, 7–12, 13–24) and the exact
- * day-based ladder is also stored in app_setting 'rates.fd_tenure_tiers'.
+ * Tenure tiers follow the bank's published card (आकर्षक मुदत ठेव योजना):
+ *   30–45 days (३० ते ४५ दिवस) → 7.00%
+ *   46–180 days (४६ ते १८० दिवस) → 8.00%
+ *   181–365 days (१८१ ते ३६५ दिवस) → 10.00%
+ *   366+ days (३६६ व वरिल दिवसाकरिता) → 12.00%
+ *   दामदुप्पट योजना (Damduppat Yojana - 72 Months / 6 Years) → 16.6667% (Double Principal)
  */
 const FD_RATE_CARD = [
-  { minAmount: '1000.00', maxAmount: '25000.00', tenureMonths: 2, interestRate: '7.0000' },
-  { minAmount: '1000.00', maxAmount: '25000.00', tenureMonths: 6, interestRate: '8.0000' },
-  { minAmount: '1000.00', maxAmount: '25000.00', tenureMonths: 12, interestRate: '10.0000' },
-  { minAmount: '1000.00', maxAmount: '25000.00', tenureMonths: 24, interestRate: '11.5000' },
-  { minAmount: '25000.01', maxAmount: '50000.00', tenureMonths: 12, interestRate: '10.0000' },
-  { minAmount: '50000.01', maxAmount: '100000.00', tenureMonths: 12, interestRate: '10.0000' },
+  { minAmount: '1000.00', maxAmount: '100000.00', tenureMonths: 1, interestRate: '7.0000' },
+  { minAmount: '1000.00', maxAmount: '100000.00', tenureMonths: 6, interestRate: '8.0000' },
+  { minAmount: '1000.00', maxAmount: '100000.00', tenureMonths: 12, interestRate: '10.0000' },
+  { minAmount: '1000.00', maxAmount: '100000.00', tenureMonths: 24, interestRate: '12.0000' },
+  { minAmount: '1000.00', maxAmount: '100000.00', tenureMonths: 36, interestRate: '12.0000' },
+  { minAmount: '1000.00', maxAmount: '100000.00', tenureMonths: 72, interestRate: '16.6667' },
 ];
 
 /** Loan products (spec §12). */
@@ -405,17 +406,18 @@ const APP_SETTINGS: Array<{ key: string; value: unknown; category: string; descr
     value: {
       currency: 'INR',
       basis: 'days',
-      source: 'Published FD rate card (client scheme image)',
+      source: 'Official Published FD rate card (आकर्षक मुदत ठेव योजना)',
       tiers: [
-        { label: '30–45 days', minDays: 30, maxDays: 45, ratePercent: 7.0 },
-        { label: '46–180 days', minDays: 46, maxDays: 180, ratePercent: 8.0 },
-        { label: '181–365 days', minDays: 181, maxDays: 365, ratePercent: 10.0 },
-        { label: '366+ days', minDays: 366, maxDays: null, ratePercent: 11.5 },
+        { label: '३० ते ४५ दिवस (30–45 days)', minDays: 30, maxDays: 45, ratePercent: 7.0, tenureMonths: 1 },
+        { label: '४६ ते १८० दिवस (46–180 days)', minDays: 46, maxDays: 180, ratePercent: 8.0, tenureMonths: 6 },
+        { label: '१८१ ते ३६५ दिवस (181–365 days)', minDays: 181, maxDays: 365, ratePercent: 10.0, tenureMonths: 12 },
+        { label: '३६६ व वरिल दिवस (366+ days)', minDays: 366, maxDays: null, ratePercent: 12.0, tenureMonths: 24 },
+        { label: 'दामदुप्पट योजना (Damduppat Yojana)', minDays: 2190, maxDays: 2190, ratePercent: 16.6667, tenureMonths: 72, isDamduppat: true },
       ],
-      note: 'Authoritative day-based ladder for display. FD accounts are opened on tenure_months; the month-mapped fd_rate_card rows (2/6/12/24 → 7/8/10/11.5%) govern actual account interest.',
+      note: 'Authoritative day-based ladder for published FD schemes. Accounts are booked against fd_rate_card rows (1/6/12/24/36/72 mo → 7/8/10/12/16.67%).',
     },
     category: 'rates',
-    description: 'Published FD interest ladder by tenure days (30–45 → 7%, 46–180 → 8%, 181–365 → 10%, 366+ → 11.5%)',
+    description: 'Official Published FD rate card (30–45d → 7%, 46–180d → 8%, 181–365d → 10%, 366+d → 12%, Damduppat 72m → Double)',
   },
   {
     key: 'schemes.daily_180_returns',
@@ -423,8 +425,8 @@ const APP_SETTINGS: Array<{ key: string; value: unknown; category: string; descr
       currency: 'INR',
       schemeCode: 'DAILY-180',
       days: 180,
-      rateAnnualPercent: 5.15,
-      note: 'Daily doorstep collection for 180 days. Maturity value = dailyAmount × 180 + flat interest (avg balance × 5.15% p.a. for 6 months).',
+      rateAnnualPercent: 4.00,
+      note: 'Daily doorstep collection for 180 days. Maturity value = dailyAmount × 180 + flat interest (avg balance × 4.00% p.a. for 6 months).',
       rows: [
         { dailyAmount: '50.00', depositTotal: '9000.00', interestEarned: '115.00', maturityValue: '9115.00' },
         { dailyAmount: '100.00', depositTotal: '18000.00', interestEarned: '230.00', maturityValue: '18230.00' },
