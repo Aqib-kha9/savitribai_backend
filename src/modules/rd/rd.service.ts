@@ -560,7 +560,7 @@ function generateInstalmentDates(start: string, end: string, frequency: RdFreque
   const dates: string[] = [];
   let cursor = start;
   const max = expectedCount ?? MAX_SCHEDULE_INSTALMENTS;
-  while (cursor < end && dates.length < max) {
+  while ((cursor < end || (expectedCount !== undefined && dates.length < expectedCount)) && dates.length < max) {
     dates.push(toWorkingDay(cursor));
     cursor = nextDueDate(cursor, frequency);
   }
@@ -1178,19 +1178,18 @@ export async function openAccount(
     }
 
     // Resolve the maturity date: explicit input wins; otherwise the term is
-    // durationMonths measured from firstDueDate (refined by the schema).
+    // durationMonths measured from startDate (or firstDueDate fallback).
     let maturityDate: string;
     if (input.maturityDate) {
-      if (input.maturityDate <= firstDueDate) {
-        throw new BusinessRuleError('maturityDate must fall after firstDueDate', 'MATURITY_BEFORE_FIRST_DUE');
+      if (input.maturityDate <= startDate) {
+        throw new BusinessRuleError('maturityDate must fall after start date', 'MATURITY_BEFORE_START');
       }
       maturityDate = input.maturityDate;
     } else if (input.durationMonths !== undefined) {
       if (input.frequency === 'daily' && input.durationMonths === 6) {
-        maturityDate = addDays(firstDueDate, 180);
+        maturityDate = addDays(startDate, 180);
       } else {
-        // 12 months + 2 banking transaction days per client specification
-        maturityDate = addDays(addMonths(firstDueDate, input.durationMonths), 2);
+        maturityDate = addMonths(startDate, input.durationMonths);
       }
     } else {
       throw new BusinessRuleError(
@@ -1200,8 +1199,8 @@ export async function openAccount(
     }
 
     // Term must fall inside the scheme's duration window (allowing banking buffer days)
-    const lowerBound = addMonths(firstDueDate, scheme.min_duration_months);
-    const upperBound = addDays(addMonths(firstDueDate, scheme.max_duration_months), 7);
+    const lowerBound = addMonths(startDate, scheme.min_duration_months);
+    const upperBound = addDays(addMonths(firstDueDate > startDate ? firstDueDate : startDate, scheme.max_duration_months), 30);
     if (maturityDate < lowerBound) {
       throw new BusinessRuleError(
         `Term is below the scheme minimum of ${scheme.min_duration_months} months`,
@@ -1215,7 +1214,7 @@ export async function openAccount(
       );
     }
 
-    const termMonths = input.durationMonths ?? Math.max(1, monthsBetween(firstDueDate, maturityDate));
+    const termMonths = input.durationMonths ?? Math.max(1, monthsBetween(startDate, maturityDate));
     const expectedCount = getExpectedInstallmentCount(input.frequency, termMonths);
     const dueDates = generateInstalmentDates(firstDueDate, maturityDate, input.frequency, expectedCount);
     if (dueDates.length === 0) {

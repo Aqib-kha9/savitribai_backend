@@ -1370,6 +1370,12 @@ export interface DayTotalsView {
   entryCount: number;
   cashAmount: number;
   digitalAmount: number;
+  loanAmount: number;
+  loanCount: number;
+  dailyDepositAmount: number;
+  dailyDepositCount: number;
+  rdAmount: number;
+  rdCount: number;
   queuedCount: number;
   waitingCount: number;
   rejectedCount: number;
@@ -1380,6 +1386,12 @@ type DayTotalsRow = {
   entryCount: number;
   cashAmount: number;
   digitalAmount: number;
+  loanAmount: number;
+  loanCount: number;
+  dailyDepositAmount: number;
+  dailyDepositCount: number;
+  rdAmount: number;
+  rdCount: number;
   queuedCount: number;
   waitingCount: number;
   rejectedCount: number;
@@ -1390,6 +1402,12 @@ const DAY_TOTALS_SQL = `
          COUNT(*)::int AS "entryCount",
          COALESCE(SUM(amount) FILTER (WHERE mode = 'cash'), 0)::float8 AS "cashAmount",
          COALESCE(SUM(amount) FILTER (WHERE mode <> 'cash'), 0)::float8 AS "digitalAmount",
+         COALESCE(SUM(amount) FILTER (WHERE product_type = 'loan'), 0)::float8 AS "loanAmount",
+         COUNT(*) FILTER (WHERE product_type = 'loan')::int AS "loanCount",
+         COALESCE(SUM(amount) FILTER (WHERE product_type IN ('dailyDeposit', 'savingsDeposit')), 0)::float8 AS "dailyDepositAmount",
+         COUNT(*) FILTER (WHERE product_type IN ('dailyDeposit', 'savingsDeposit'))::int AS "dailyDepositCount",
+         COALESCE(SUM(amount) FILTER (WHERE product_type = 'recurringDeposit'), 0)::float8 AS "rdAmount",
+         COUNT(*) FILTER (WHERE product_type = 'recurringDeposit')::int AS "rdCount",
          0::int AS "queuedCount",
          COUNT(*) FILTER (WHERE status = 'waiting')::int AS "waitingCount",
          COUNT(*) FILTER (WHERE status = 'rejected')::int AS "rejectedCount"
@@ -1403,6 +1421,12 @@ function toDayTotalsView(businessDate: string, row: DayTotalsRow): DayTotalsView
     entryCount: row.entryCount,
     cashAmount: row.cashAmount,
     digitalAmount: row.digitalAmount,
+    loanAmount: row.loanAmount ?? 0,
+    loanCount: row.loanCount ?? 0,
+    dailyDepositAmount: row.dailyDepositAmount ?? 0,
+    dailyDepositCount: row.dailyDepositCount ?? 0,
+    rdAmount: row.rdAmount ?? 0,
+    rdCount: row.rdCount ?? 0,
     queuedCount: row.queuedCount,
     waitingCount: row.waitingCount,
     rejectedCount: row.rejectedCount,
@@ -1429,6 +1453,12 @@ export async function getMyDayTotals(
     entryCount: 0,
     cashAmount: 0,
     digitalAmount: 0,
+    loanAmount: 0,
+    loanCount: 0,
+    dailyDepositAmount: 0,
+    dailyDepositCount: 0,
+    rdAmount: 0,
+    rdCount: 0,
     queuedCount: 0,
     waitingCount: 0,
     rejectedCount: 0,
@@ -1481,11 +1511,17 @@ export async function submitDayClose(
       agent.id,
       businessDate,
     ]);
-    const totalsRow = totalsResult.rows[0] ?? {
+    const totalsRow: DayTotalsRow = totalsResult.rows[0] ?? {
       totalAmount: 0,
       entryCount: 0,
       cashAmount: 0,
       digitalAmount: 0,
+      loanAmount: 0,
+      loanCount: 0,
+      dailyDepositAmount: 0,
+      dailyDepositCount: 0,
+      rdAmount: 0,
+      rdCount: 0,
       queuedCount: 0,
       waitingCount: 0,
       rejectedCount: 0,

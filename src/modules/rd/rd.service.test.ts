@@ -49,4 +49,20 @@ describe('Backend RD Term & Installment Scheduling Unit Tests', () => {
     expect(finalInstalmentDue).toBe('2027-09-16');
     expect(finalInstalmentDue < maturity).toBe(true);
   });
+
+  it('correctly aligns 12-month tenure when opened on 24th and first due on 10th of next month', () => {
+    const startDate = '2026-10-24';
+    const firstDueDate = '2026-11-10';
+    const maturityDate = addMonths(startDate, 12);
+    expect(maturityDate).toBe('2027-10-24');
+
+    // Exactly 12 months between start and maturity
+    expect(monthsBetween(startDate, maturityDate)).toBe(12);
+
+    // 12th monthly installment is 11 months after firstDueDate
+    const finalInstalmentDue = addMonths(firstDueDate, 11);
+    expect(finalInstalmentDue).toBe('2027-10-10');
+    expect(finalInstalmentDue <= maturityDate).toBe(true);
+  });
 });
+

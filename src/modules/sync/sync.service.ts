@@ -64,6 +64,10 @@ export interface SubmissionStatusView {
   submittedFromOffline: boolean;
   offlineLate: boolean;
   createdAt: string;
+  receiptNumber?: string | null;
+  accountNumber?: string | null;
+  accountId?: string | null;
+  totalCollectedSoFar?: number | null;
 }
 
 /** Agent-facing view of a recorded visit (§20.3.6). */
@@ -333,13 +337,22 @@ type SubmissionListRow = {
   submitted_from_offline: boolean;
   offline_late: boolean;
   created_at: Date;
+  receipt_number: string | null;
+  account_number: string | null;
+  account_id: string | null;
+  total_collected_so_far: number | null;
   total?: number;
 };
 
 const SUBMISSION_SELECT = `ce.id, ce.idempotency_key, ce.customer_id, c.full_name AS customer_name,
       ce.product_type, ce.amount, ce.mode, ce.status, ce.is_partial, ce.is_advance,
       ce.business_date, ce.collected_at, ce.submitted_at, ce.submitted_from_offline,
-      ce.offline_late, ce.created_at, count(*) OVER()::int AS total`;
+      ce.offline_late, ce.created_at,
+      cr.receipt_number,
+      COALESCE(cr.account_number, sa.account_number, rda.account_number, l.account_number, '') AS account_number,
+      COALESCE(ce.savings_account_id, ce.rd_account_id, ce.loan_id) AS account_id,
+      COALESCE(l.total_paid, rda.total_paid, sa.current_balance, 0)::float8 AS total_collected_so_far,
+      count(*) OVER()::int AS total`;
 
 function toSubmissionStatusView(row: SubmissionListRow): SubmissionStatusView {
   return {
@@ -359,6 +372,10 @@ function toSubmissionStatusView(row: SubmissionListRow): SubmissionStatusView {
     submittedFromOffline: row.submitted_from_offline,
     offlineLate: row.offline_late,
     createdAt: row.created_at.toISOString(),
+    receiptNumber: row.receipt_number ?? null,
+    accountNumber: row.account_number ?? null,
+    accountId: row.account_id ?? null,
+    totalCollectedSoFar: row.total_collected_so_far != null ? Number(row.total_collected_so_far) : null,
   };
 }
 
@@ -404,6 +421,10 @@ export async function listMySubmissions(
     `SELECT ${SUBMISSION_SELECT}
        FROM collection_entry ce
        JOIN customer c ON c.id = ce.customer_id
+       LEFT JOIN collection_receipt cr ON cr.collection_id = ce.id
+       LEFT JOIN savings_account sa ON sa.id = ce.savings_account_id
+       LEFT JOIN rd_account rda ON rda.id = ce.rd_account_id
+       LEFT JOIN loan l ON l.id = ce.loan_id
        ${whereSql}
       ORDER BY ce.business_date DESC, ce.submitted_at DESC
       LIMIT ${limit} OFFSET ${offset}`,
