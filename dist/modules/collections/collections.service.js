@@ -456,7 +456,7 @@ export async function applyCollectionEntryToAccount(client, collectionId, actor,
        FROM collection_entry ce
        LEFT JOIN collection_receipt cr ON cr.collection_id = ce.id
       WHERE ce.id = $1
-      FOR UPDATE`, [collectionId]);
+      FOR UPDATE OF ce`, [collectionId]);
     const entry = row.rows[0];
     if (!entry)
         return false;

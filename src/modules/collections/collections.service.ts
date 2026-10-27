@@ -899,7 +899,7 @@ export async function applyCollectionEntryToAccount(
        FROM collection_entry ce
        LEFT JOIN collection_receipt cr ON cr.collection_id = ce.id
       WHERE ce.id = $1
-      FOR UPDATE`,
+      FOR UPDATE OF ce`,
     [collectionId],
   );
 
