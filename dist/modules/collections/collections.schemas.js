@@ -31,6 +31,7 @@ import { collectionModeSchema, collectionProductTypeSchema, collectionSubmission
  *    enforced in the service, not the boundary.
  */
 export const uuidSchema = z.string().uuid('Invalid id format');
+export const accountRefSchema = z.string().trim().min(1, 'Account reference is required').max(100);
 const dateOnlySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format');
 /**
  * ISO-8601 instant accepted for `collectedAt` / `visitedAt`. The mobile app
@@ -75,9 +76,9 @@ export const submitCollectionSchema = z
     .object({
     productType: collectionProductTypeSchema,
     customerId: uuidSchema,
-    savingsAccountId: uuidSchema.optional(),
-    rdAccountId: uuidSchema.optional(),
-    loanId: uuidSchema.optional(),
+    savingsAccountId: accountRefSchema.optional(),
+    rdAccountId: accountRefSchema.optional(),
+    loanId: accountRefSchema.optional(),
     amount: amountSchema,
     mode: collectionModeSchema,
     isPartial: z.boolean().default(false),
@@ -253,9 +254,9 @@ export const emergencyApprovalSchema = z.object({
     agentId: uuidSchema,
     customerId: uuidSchema,
     productType: collectionProductTypeSchema,
-    savingsAccountId: uuidSchema.optional(),
-    rdAccountId: uuidSchema.optional(),
-    loanId: uuidSchema.optional(),
+    savingsAccountId: accountRefSchema.optional(),
+    rdAccountId: accountRefSchema.optional(),
+    loanId: accountRefSchema.optional(),
     amount: amountSchema,
     mode: collectionModeSchema,
     isPartial: z.boolean().default(false),

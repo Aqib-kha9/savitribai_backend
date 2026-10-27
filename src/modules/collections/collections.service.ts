@@ -663,25 +663,26 @@ function pickAccountField(
   return { column: present[0]![0], id: present[0]![1] };
 }
 
-type AccountTargetRow = { account_number: string; product_label: string; status: string };
+type AccountTargetRow = { id: string; account_number: string; product_label: string; status: string };
 
 /**
  * Resolves the account number + product label for the collection receipt and
  * enforces account ownership (customer_id) and collectability status.
+ * Supports both internal UUID and human-readable account/loan numbers (e.g. DLA0028, SBA0087).
  */
 async function resolveAccountTarget(
   client: PoolClient,
   column: ProductAccountColumn,
-  accountId: string,
+  accountRef: string,
   customerId: string,
-): Promise<{ accountNumber: string; productLabel: string }> {
+): Promise<{ id: string; accountNumber: string; productLabel: string }> {
   if (column === 'savings_account_id') {
     const result = await client.query<AccountTargetRow>(
-      `SELECT sa.account_number, dp.name AS product_label, sa.status
+      `SELECT sa.id, sa.account_number, dp.name AS product_label, sa.status
          FROM savings_account sa
          JOIN deposit_product dp ON dp.id = sa.product_id
-        WHERE sa.id = $1 AND sa.customer_id = $2`,
-      [accountId, customerId],
+        WHERE (sa.id::text = $1 OR sa.account_number = $1) AND sa.customer_id = $2`,
+      [accountRef, customerId],
     );
     const row = result.rows[0];
     if (!row) throw new NotFoundError('Savings account');
@@ -691,16 +692,16 @@ async function resolveAccountTarget(
         'ACCOUNT_NOT_COLLECTABLE',
       );
     }
-    return { accountNumber: row.account_number, productLabel: row.product_label };
+    return { id: row.id, accountNumber: row.account_number, productLabel: row.product_label };
   }
 
   if (column === 'rd_account_id') {
     const result = await client.query<AccountTargetRow>(
-      `SELECT ra.account_number, rs.name AS product_label, ra.status
+      `SELECT ra.id, ra.account_number, rs.name AS product_label, ra.status
          FROM rd_account ra
          JOIN rd_scheme rs ON rs.id = ra.scheme_id
-        WHERE ra.id = $1 AND ra.customer_id = $2`,
-      [accountId, customerId],
+        WHERE (ra.id::text = $1 OR ra.account_number = $1) AND ra.customer_id = $2`,
+      [accountRef, customerId],
     );
     const row = result.rows[0];
     if (!row) throw new NotFoundError('Recurring deposit account');
@@ -710,15 +711,15 @@ async function resolveAccountTarget(
         'ACCOUNT_NOT_COLLECTABLE',
       );
     }
-    return { accountNumber: row.account_number, productLabel: row.product_label };
+    return { id: row.id, accountNumber: row.account_number, productLabel: row.product_label };
   }
 
   const result = await client.query<AccountTargetRow>(
-    `SELECT l.loan_number AS account_number, lp.name AS product_label, l.status
+    `SELECT l.id, l.loan_number AS account_number, lp.name AS product_label, l.status
        FROM loan l
        JOIN loan_product lp ON lp.id = l.product_id
-      WHERE l.id = $1 AND l.customer_id = $2`,
-    [accountId, customerId],
+      WHERE (l.id::text = $1 OR l.loan_number = $1) AND l.customer_id = $2`,
+    [accountRef, customerId],
   );
   const row = result.rows[0];
   if (!row) throw new NotFoundError('Loan');
@@ -728,7 +729,7 @@ async function resolveAccountTarget(
       'ACCOUNT_NOT_COLLECTABLE',
     );
   }
-  return { accountNumber: row.account_number, productLabel: row.product_label };
+  return { id: row.id, accountNumber: row.account_number, productLabel: row.product_label };
 }
 
 // ---------------------------------------------------------------------------
@@ -1009,7 +1010,7 @@ export async function submitCollection(
         customerName: customer.full_name,
         productType: input.productType === 'dailyDeposit' ? 'savingsDeposit' : input.productType,
         accountColumn: account.column,
-        accountId: account.id,
+        accountId: target.id,
         accountNumber: target.accountNumber,
         productLabel: target.productLabel,
         amount: input.amount,
@@ -1415,7 +1416,7 @@ export async function reverseCollection(
         customerName: customer.full_name,
         productType: repl.productType,
         accountColumn: account.column,
-        accountId: account.id,
+        accountId: target.id,
         accountNumber: target.accountNumber,
         productLabel: target.productLabel,
         amount: repl.amount,
@@ -1756,7 +1757,7 @@ export async function approveEmergencyCollection(
       customerName: customer.full_name,
       productType: input.productType === 'dailyDeposit' ? 'savingsDeposit' : input.productType,
       accountColumn: account.column,
-      accountId: account.id,
+      accountId: target.id,
       accountNumber: target.accountNumber,
       productLabel: target.productLabel,
       amount: input.amount,
