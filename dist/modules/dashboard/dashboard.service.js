@@ -278,11 +278,13 @@ async function getBankTotals() {
     const loanOutstanding = loanRows.rows[0]?.outstanding ?? 0;
     const totalDeposits = round2(savingsBalance + ddBalance + rdBalance + fdBalance);
     const totalLoansOutstanding = round2(loanOutstanding);
+    const totalBusiness = round2(totalDeposits + totalLoansOutstanding);
     const netBankBalance = round2(totalDeposits - totalLoansOutstanding);
     const totalAccountsCount = savingsCount + ddCount + rdCount + fdCount + loanCount;
     return {
         totalDeposits,
         totalLoansOutstanding,
+        totalBusiness,
         netBankBalance,
         totalAccountsCount,
         breakdown: {
