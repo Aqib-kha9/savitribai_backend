@@ -17,14 +17,3 @@ UPDATE savings_account
        maturity_date = NULL
  WHERE product_id IN (SELECT id FROM deposit_product WHERE code IN ('SAV-STD', 'SAV-DLY'))
    AND account_number LIKE 'DDA%';
-
--- 4. Update any collection receipts generated for those converted accounts
-UPDATE collection_receipt
-   SET account_number = REPLACE(account_number, 'DDA', 'SBA')
- WHERE account_number LIKE 'DDA%'
-   AND collection_id IN (
-     SELECT ce.id FROM collection_entry ce
-      JOIN savings_account sa ON sa.id = ce.savings_account_id
-      JOIN deposit_product dp ON dp.id = sa.product_id
-     WHERE dp.code IN ('SAV-STD', 'SAV-DLY')
-   );

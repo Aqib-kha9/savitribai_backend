@@ -178,18 +178,6 @@ async function runSelfHealingMigrations(): Promise<void> {
          AND account_number LIKE 'DDA%';
     `);
 
-    await query(`
-      UPDATE collection_receipt
-         SET account_number = REPLACE(account_number, 'DDA', 'SBA')
-       WHERE account_number LIKE 'DDA%'
-         AND collection_id IN (
-           SELECT ce.id FROM collection_entry ce
-            JOIN savings_account sa ON sa.id = ce.savings_account_id
-            JOIN deposit_product dp ON dp.id = sa.product_id
-           WHERE dp.code IN ('SAV-STD', 'SAV-DLY')
-         );
-    `);
-
     console.log('Self-healing migrations: receipt sequences & savings accounts configured and synced.');
   } catch (err) {
     console.warn('Self-healing migration notice:', err);
