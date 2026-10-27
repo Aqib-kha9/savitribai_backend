@@ -1151,7 +1151,9 @@ async function recomputeLoanTotals(client: PoolClient, loanId: string): Promise<
             next_due_date = $3::date,
             status = CASE
               WHEN status IN ('settled','written_off','closed') THEN status
+              WHEN $2::numeric <= 0 THEN 'settled'
               WHEN $4::int > 0 THEN 'overdue'
+              WHEN status = 'overdue' THEN 'active'
               ELSE status
             END,
             updated_at = now()
