@@ -2339,214 +2339,223 @@ export async function recordRepayment(
   input: RecordRepaymentInput,
   meta: RequestMeta = {},
 ): Promise<RepaymentResult> {
-  const result = await transaction<RepaymentResult>(async (client) => {
-    const loan = await selectLoanById(client, loanId);
-    if (!loan) throw new NotFoundError('Loan');
-    if (!OPEN_LOAN_STATUSES.includes(loan.status as LoanStatus)) {
-      throw new BusinessRuleError(
-        `Repayments can only be recorded on an open loan (current status: ${loan.status})`,
-        'LOAN_NOT_PAYABLE',
-      );
-    }
+  return transaction<RepaymentResult>(async (client) => {
+    return executeLoanRepayment(client, actor, loanId, input, meta);
+  });
+}
 
-    // State is kept honest before any money moves.
-    await sweepMissedInstalments(client);
-
-    const due = await client.query<InstalmentDueRow>(
-      `SELECT id, instalment_number, due_date::text AS due_date,
-              expected_amount::text AS expected_amount,
-              principal_component::text AS principal_component,
-              interest_component::text AS interest_component,
-              penalty_component::text AS penalty_component,
-              fees_component::text AS fees_component,
-              paid_amount::text AS paid_amount,
-              status, allocation
-         FROM loan_instalment
-        WHERE loan_id = $1 AND status IN ('due','partial','missed','overdue')
-        ORDER BY due_date ASC, instalment_number ASC
-        FOR UPDATE`,
-      [loanId],
+export async function executeLoanRepayment(
+  client: PoolClient,
+  actor: AuthContext,
+  loanId: string,
+  input: RecordRepaymentInput,
+  meta: RequestMeta = {},
+): Promise<RepaymentResult> {
+  const loan = await selectLoanById(client, loanId);
+  if (!loan) throw new NotFoundError('Loan');
+  if (!OPEN_LOAN_STATUSES.includes(loan.status as LoanStatus)) {
+    throw new BusinessRuleError(
+      `Repayments can only be recorded on an open loan (current status: ${loan.status})`,
+      'LOAN_NOT_PAYABLE',
     );
-    const dueRows = due.rows;
+  }
 
-    const paidOn = input.paidOn ?? istBusinessDate();
-    const paymentMethod = input.paymentMethod;
-    const referenceNumber = input.referenceNumber ?? null;
-    const collectionEntryId = input.collectionEntryId ?? null;
+  // State is kept honest before any money moves.
+  await sweepMissedInstalments(client);
 
-    // Per-instalment scheduled interest (flat interest spread over the schedule).
-    const countResult = await client.query<{ total: number }>(
-      `SELECT COUNT(*)::int AS total FROM loan_instalment WHERE loan_id = $1`,
-      [loanId],
+  const due = await client.query<InstalmentDueRow>(
+    `SELECT id, instalment_number, due_date::text AS due_date,
+            expected_amount::text AS expected_amount,
+            principal_component::text AS principal_component,
+            interest_component::text AS interest_component,
+            penalty_component::text AS penalty_component,
+            fees_component::text AS fees_component,
+            paid_amount::text AS paid_amount,
+            status, allocation
+       FROM loan_instalment
+      WHERE loan_id = $1 AND status IN ('due','partial','missed','overdue')
+      ORDER BY due_date ASC, instalment_number ASC
+      FOR UPDATE`,
+    [loanId],
+  );
+  const dueRows = due.rows;
+
+  const paidOn = input.paidOn ?? istBusinessDate();
+  const paymentMethod = input.paymentMethod;
+  const referenceNumber = input.referenceNumber ?? null;
+  const collectionEntryId = input.collectionEntryId ?? null;
+
+  // Per-instalment scheduled interest (flat interest spread over the schedule).
+  const countResult = await client.query<{ total: number }>(
+    `SELECT COUNT(*)::int AS total FROM loan_instalment WHERE loan_id = $1`,
+    [loanId],
+  );
+  const instalmentCount = countResult.rows[0]?.total ?? 0;
+  const equalWeights = Array<bigint>(instalmentCount).fill(1n);
+  const interestSplit = allocateByWeights(loan.flat_interest_total, equalWeights);
+
+  // Allocate the payment across outstanding instalments, oldest first.
+  const allocationUpdates: Array<{
+    row: InstalmentDueRow;
+    amountPaid: string;
+    newPaidAmount: string;
+    newStatus: LoanInstalmentStatus;
+    components: { interest: string; penalty: string; fees: string; principal: string };
+    interestShare: string;
+    principalShare: string;
+  }> = [];
+  let remaining = toCents(input.amount);
+  for (const row of dueRows) {
+    if (remaining <= 0n) break;
+    const outstanding = subMoney(row.expected_amount, row.paid_amount);
+    const outstandingCents = toCents(outstanding);
+    if (outstandingCents <= 0n) continue;
+    const paymentCents = remaining >= outstandingCents ? outstandingCents : remaining;
+    const interestShare = interestSplit[row.instalment_number - 1] ?? '0.00';
+    const principalShare = subMoney(row.expected_amount, interestShare);
+    const components = splitLoanPayment(row, interestSplit, paymentCents);
+    const newPaidAmount = addMoney(row.paid_amount, fromCents(paymentCents));
+    remaining -= paymentCents;
+
+    const newStatus: LoanInstalmentStatus =
+      compareMoney(newPaidAmount, row.expected_amount) >= 0
+        ? 'paid'
+        : row.due_date < paidOn
+          ? 'overdue'
+          : 'partial';
+
+    allocationUpdates.push({
+      row,
+      amountPaid: fromCents(paymentCents),
+      newPaidAmount,
+      newStatus,
+      components,
+      interestShare,
+      principalShare,
+    });
+  }
+
+  // Anything above every outstanding instalment is held on the loan account
+  // (spec §12.5.4) and only released once the loan is completed.
+  let heldThisPayment: string | null = null;
+  if (remaining > 0n) {
+    heldThisPayment = fromCents(remaining);
+    await client.query(
+      `INSERT INTO loan_surplus (loan_id, entry_type, amount, source_collection_id)
+       VALUES ($1, 'held', $2::numeric, $3)`,
+      [loanId, heldThisPayment, collectionEntryId],
     );
-    const instalmentCount = countResult.rows[0]?.total ?? 0;
-    const equalWeights = Array<bigint>(instalmentCount).fill(1n);
-    const interestSplit = allocateByWeights(loan.flat_interest_total, equalWeights);
+  }
 
-    // Allocate the payment across outstanding instalments, oldest first.
-    const allocationUpdates: Array<{
-      row: InstalmentDueRow;
-      amountPaid: string;
-      newPaidAmount: string;
-      newStatus: LoanInstalmentStatus;
-      components: { interest: string; penalty: string; fees: string; principal: string };
-      interestShare: string;
-      principalShare: string;
-    }> = [];
-    let remaining = toCents(input.amount);
-    for (const row of dueRows) {
-      if (remaining <= 0n) break;
-      const outstanding = subMoney(row.expected_amount, row.paid_amount);
-      const outstandingCents = toCents(outstanding);
-      if (outstandingCents <= 0n) continue;
-      const paymentCents = remaining >= outstandingCents ? outstandingCents : remaining;
-      const interestShare = interestSplit[row.instalment_number - 1] ?? '0.00';
-      const principalShare = subMoney(row.expected_amount, interestShare);
-      const components = splitLoanPayment(row, interestSplit, paymentCents);
-      const newPaidAmount = addMoney(row.paid_amount, fromCents(paymentCents));
-      remaining -= paymentCents;
+  const appliedIds: string[] = [];
+  for (const update of allocationUpdates) {
+    const { row } = update;
+    const prior = Array.isArray(row.allocation) ? (row.allocation as AllocationEvent[]) : [];
+    const eventRecord: AllocationEvent = {
+      paidOn,
+      amount: update.amountPaid,
+      paymentMethod,
+      components: update.components,
+    };
+    if (referenceNumber) eventRecord.referenceNumber = referenceNumber;
+    if (collectionEntryId) eventRecord.sourceCollectionId = collectionEntryId;
 
-      const newStatus: LoanInstalmentStatus =
-        compareMoney(newPaidAmount, row.expected_amount) >= 0
-          ? 'paid'
-          : row.due_date < paidOn
-            ? 'overdue'
-            : 'partial';
-
-      allocationUpdates.push({
-        row,
-        amountPaid: fromCents(paymentCents),
-        newPaidAmount,
-        newStatus,
-        components,
-        interestShare,
-        principalShare,
-      });
-    }
-
-    // Anything above every outstanding instalment is held on the loan account
-    // (spec §12.5.4) and only released once the loan is completed.
-    let heldThisPayment: string | null = null;
-    if (remaining > 0n) {
-      heldThisPayment = fromCents(remaining);
-      await client.query(
-        `INSERT INTO loan_surplus (loan_id, entry_type, amount, source_collection_id)
-         VALUES ($1, 'held', $2::numeric, $3)`,
-        [loanId, heldThisPayment, collectionEntryId],
-      );
-    }
-
-    const appliedIds: string[] = [];
-    for (const update of allocationUpdates) {
-      const { row } = update;
-      const prior = Array.isArray(row.allocation) ? (row.allocation as AllocationEvent[]) : [];
-      const eventRecord: AllocationEvent = {
+    // Backfill the scheduled interest/principal split of the instalment so the
+    // detail and schedule views carry meaningful component figures once paid.
+    await client.query(
+      `UPDATE loan_instalment
+          SET paid_amount = $1::numeric,
+              status = $2,
+              paid_on = $3,
+              interest_component = $4::numeric,
+              principal_component = $5::numeric,
+              allocation = $6::jsonb,
+              updated_at = now()
+        WHERE id = $7`,
+      [
+        update.newPaidAmount,
+        update.newStatus,
         paidOn,
-        amount: update.amountPaid,
-        paymentMethod,
+        update.interestShare,
+        update.principalShare,
+        JSON.stringify([...prior, eventRecord]),
+        row.id,
+      ],
+    );
+    appliedIds.push(row.id);
+  }
+
+  // Recompose loan totals + status from the instalment ledger.
+  const totals = await recomputeLoanTotals(client, loanId);
+  const refreshed = await selectLoanById(client, loanId);
+  if (!refreshed) throw new NotFoundError('Loan');
+
+  // Current net surplus held on the account (releases/applications reduce it).
+  const balance = await client.query<SurplusBalanceRow>(
+    `SELECT COALESCE(SUM(amount) FILTER (WHERE entry_type = 'held'), 0)::numeric::text AS held,
+            COALESCE(SUM(amount) FILTER (WHERE entry_type IN ('released','applied')), 0)::numeric::text
+              AS released
+       FROM loan_surplus
+      WHERE loan_id = $1`,
+    [loanId],
+  );
+  const balanceRow = balance.rows[0] ?? null;
+  let surplusHeld: string | null = null;
+  if (balanceRow) {
+    const net = subMoney(balanceRow.held, balanceRow.released);
+    surplusHeld = compareMoney(net, '0.00') > 0 ? net : null;
+  }
+
+  await audit(client, {
+    ...actorAuditBase(actor),
+    requestId: meta.requestId ?? null,
+    action: AUDIT_ACTIONS.LOAN_REPAYMENT_RECORDED,
+    entityType: 'loan',
+    entityId: loanId,
+    metadata: {
+      loanNumber: loan.loan_number,
+      amount: input.amount,
+      paidOn,
+      paymentMethod,
+      referenceNumber,
+      collectionEntryId,
+      instalmentsCovered: allocationUpdates.length,
+      allocations: allocationUpdates.map((update) => ({
+        instalmentId: update.row.id,
+        instalmentNumber: update.row.instalment_number,
+        amountPaid: update.amountPaid,
+        statusAfter: update.newStatus,
         components: update.components,
-      };
-      if (referenceNumber) eventRecord.referenceNumber = referenceNumber;
-      if (collectionEntryId) eventRecord.sourceCollectionId = collectionEntryId;
-
-      // Backfill the scheduled interest/principal split of the instalment so the
-      // detail and schedule views carry meaningful component figures once paid.
-      await client.query(
-        `UPDATE loan_instalment
-            SET paid_amount = $1::numeric,
-                status = $2,
-                paid_on = $3,
-                interest_component = $4::numeric,
-                principal_component = $5::numeric,
-                allocation = $6::jsonb,
-                updated_at = now()
-          WHERE id = $7`,
-        [
-          update.newPaidAmount,
-          update.newStatus,
-          paidOn,
-          update.interestShare,
-          update.principalShare,
-          JSON.stringify([...prior, eventRecord]),
-          row.id,
-        ],
-      );
-      appliedIds.push(row.id);
-    }
-
-    // Recompose loan totals + status from the instalment ledger.
-    const totals = await recomputeLoanTotals(client, loanId);
-    const refreshed = await selectLoanById(client, loanId);
-    if (!refreshed) throw new NotFoundError('Loan');
-
-    // Current net surplus held on the account (releases/applications reduce it).
-    const balance = await client.query<SurplusBalanceRow>(
-      `SELECT COALESCE(SUM(amount) FILTER (WHERE entry_type = 'held'), 0)::numeric::text AS held,
-              COALESCE(SUM(amount) FILTER (WHERE entry_type IN ('released','applied')), 0)::numeric::text
-                AS released
-         FROM loan_surplus
-        WHERE loan_id = $1`,
-      [loanId],
-    );
-    const balanceRow = balance.rows[0] ?? null;
-    let surplusHeld: string | null = null;
-    if (balanceRow) {
-      const net = subMoney(balanceRow.held, balanceRow.released);
-      surplusHeld = compareMoney(net, '0.00') > 0 ? net : null;
-    }
-
-    await audit(client, {
-      ...actorAuditBase(actor),
-      requestId: meta.requestId ?? null,
-      action: AUDIT_ACTIONS.LOAN_REPAYMENT_RECORDED,
-      entityType: 'loan',
-      entityId: loanId,
-      metadata: {
-        loanNumber: loan.loan_number,
-        amount: input.amount,
-        paidOn,
-        paymentMethod,
-        referenceNumber,
-        collectionEntryId,
-        instalmentsCovered: allocationUpdates.length,
-        allocations: allocationUpdates.map((update) => ({
-          instalmentId: update.row.id,
-          instalmentNumber: update.row.instalment_number,
-          amountPaid: update.amountPaid,
-          statusAfter: update.newStatus,
-          components: update.components,
-        })),
-        surplusHeld: surplusHeld ?? null,
-        surplusHeldThisPayment: heldThisPayment ?? null,
-        totalPaid: totals.total_paid,
-        outstandingAmount: totals.outstanding,
-        loanStatus: refreshed.status,
-        recordedBy: actor.staffId,
-      },
-    });
-
-    const appliedRows = await selectInstalmentsByIds(client, loanId, appliedIds);
-    const instalments = appliedRows.map((row): AllocationEventView => {
-      const events = Array.isArray(row.allocation) ? (row.allocation as AllocationEvent[]) : [];
-      const latest = events[events.length - 1] ?? null;
-      return {
-        instalmentId: row.id,
-        instalmentNumber: row.instalment_number,
-        amount: latest?.amount ?? row.paid_amount,
-        status: row.status as LoanInstalmentStatus,
-        components:
-          latest?.components ?? { interest: '0.00', penalty: '0.00', fees: '0.00', principal: '0.00' },
-      };
-    });
-
-    return {
-      loan: await loadLoanRef(client, loanId),
-      instalments,
-      surplusHeld,
+      })),
+      surplusHeld: surplusHeld ?? null,
+      surplusHeldThisPayment: heldThisPayment ?? null,
+      totalPaid: totals.total_paid,
       outstandingAmount: totals.outstanding,
+      loanStatus: refreshed.status,
+      recordedBy: actor.staffId,
+    },
+  });
+
+  const appliedRows = await selectInstalmentsByIds(client, loanId, appliedIds);
+  const instalments = appliedRows.map((row): AllocationEventView => {
+    const events = Array.isArray(row.allocation) ? (row.allocation as AllocationEvent[]) : [];
+    const latest = events[events.length - 1] ?? null;
+    return {
+      instalmentId: row.id,
+      instalmentNumber: row.instalment_number,
+      amount: latest?.amount ?? row.paid_amount,
+      status: row.status as LoanInstalmentStatus,
+      components:
+        latest?.components ?? { interest: '0.00', penalty: '0.00', fees: '0.00', principal: '0.00' },
     };
   });
-  return result;
+
+  return {
+    loan: await loadLoanRef(client, loanId),
+    instalments,
+    surplusHeld,
+    outstandingAmount: totals.outstanding,
+  };
 }
 
 // ---------------------------------------------------------------------------

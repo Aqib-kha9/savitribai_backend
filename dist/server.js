@@ -27,6 +27,7 @@ import { scheduleEODJobs } from './core/jobs/scheduler.js';
 import { settingsRouter } from './modules/settings/settings.routes.js';
 import { dashboardRouter } from './modules/dashboard/dashboard.routes.js';
 import { query } from './database/client.js';
+import { backfillUnpostedCollections } from './modules/collections/collections.service.js';
 const app = express();
 app.disable('x-powered-by');
 app.use(helmet());
@@ -144,7 +145,18 @@ async function runSelfHealingMigrations() {
        WHERE product_id IN (SELECT id FROM deposit_product WHERE code IN ('SAV-STD', 'SAV-DLY'))
          AND account_number LIKE 'DDA%';
     `);
-        console.log('Self-healing migrations: receipt sequences & savings accounts configured and synced.');
+        // Ensure collection_entry posted_at column exists
+        await query(`
+      ALTER TABLE collection_entry ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ;
+      ALTER TABLE collection_entry ADD COLUMN IF NOT EXISTS posted_reference TEXT;
+      CREATE INDEX IF NOT EXISTS idx_collection_posted ON collection_entry(posted_at) WHERE NOT is_deleted;
+    `);
+        // Backfill any unposted collections to their respective product accounts
+        const backfillResult = await backfillUnpostedCollections();
+        if (backfillResult.totalFound > 0) {
+            console.log(`Backfilled ${backfillResult.totalApplied}/${backfillResult.totalFound} collections to account ledgers.`);
+        }
+        console.log('Self-healing migrations: receipt sequences, savings accounts & doorstep collections configured and synced.');
     }
     catch (err) {
         console.warn('Self-healing migration notice:', err);

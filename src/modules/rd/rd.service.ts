@@ -1453,161 +1453,170 @@ export async function recordInstalmentPayment(
   input: InstalmentPaymentInput,
   meta: RequestMeta = {},
 ): Promise<InstalmentPaymentResult> {
-  const result = await transaction<InstalmentPaymentResult>(async (client) => {
-    const account = await selectRdAccountById(client, accountId);
-    if (!account) throw new NotFoundError('RD account');
-    if (!OPEN_STATUSES.includes(account.status)) {
-      throw new BusinessRuleError(
-        `Instalments can only be recorded on an active or overdue RD account (current status: ${account.status})`,
-        'ACCOUNT_NOT_PAYABLE',
-      );
-    }
-
-    const paidOn = input.paidOn ?? istBusinessDate();
-    const paymentMethod = input.paymentMethod;
-    const referenceNumber = input.referenceNumber ?? null;
-    const collectionEntryId = input.collectionEntryId ?? null;
-
-    // State is kept honest as of the payment date before we touch the money.
-    await sweepMissedInstalments(client, account, actor, meta, paidOn);
-
-    const due = await client.query<InstalmentDueRow>(
-      `SELECT id, instalment_number, due_date::text AS due_date,
-              expected_amount::text AS expected_amount,
-              paid_amount::text AS paid_amount,
-              status, allocation
-         FROM rd_instalment
-        WHERE rd_account_id = $1 AND status IN ('due','partial','missed','overdue')
-        ORDER BY due_date ASC, instalment_number ASC
-        FOR UPDATE`,
-      [accountId],
-    );
-    const dueRows = due.rows;
-    if (dueRows.length === 0) {
-      throw new BusinessRuleError('This RD account has no unpaid instalments', 'NO_DUE_INSTALMENTS');
-    }
-
-    // Allocate the payment across due instalments, oldest first (spec §10.5).
-    const allocationEvents: Array<{
-      row: InstalmentDueRow;
-      amountPaid: string;
-      newPaidAmount: string;
-      newStatus: string;
-    }> = [];
-    let remaining = toCents(input.amount);
-    for (const row of dueRows) {
-      if (remaining <= 0n) break;
-      const outstanding = subMoney(row.expected_amount, row.paid_amount);
-      const outstandingCents = toCents(outstanding);
-      if (remaining >= outstandingCents) {
-        remaining -= outstandingCents;
-        allocationEvents.push({
-          row,
-          amountPaid: outstanding,
-          newPaidAmount: row.expected_amount,
-          newStatus: 'paid',
-        });
-      } else {
-        const partPaid = fromCents(remaining);
-        allocationEvents.push({
-          row,
-          amountPaid: partPaid,
-          newPaidAmount: addMoney(row.paid_amount, partPaid),
-          newStatus: 'partial',
-        });
-        remaining = 0n;
-        break;
-      }
-    }
-
-    if (allocationEvents.length === 0) {
-      throw new BusinessRuleError('This RD account has no unpaid instalments', 'NO_DUE_INSTALMENTS');
-    }
-    if (remaining > 0n) {
-      throw new BusinessRuleError(
-        'Payment exceeds all outstanding instalments. Any excess must be routed to the linked loan account through surplus-transfer (spec §10.1 Follow-up rule)',
-        'EXCESS_PAYMENT_REQUIRES_SURPLUS_TRANSFER',
-      );
-    }
-
-    const appliedIds: string[] = [];
-    for (const event of allocationEvents) {
-      const { row } = event;
-      const prior = Array.isArray(row.allocation) ? (row.allocation as unknown[]) : [];
-      const eventRecord: Record<string, unknown> = {
-        instalmentNumber: row.instalment_number,
-        dueDate: row.due_date,
-        amountPaid: event.amountPaid,
-        newPaidAmount: event.newPaidAmount,
-        statusAfter: event.newStatus,
-        paymentMethod,
-        paidOn,
-        referenceNumber: referenceNumber ?? null,
-        collectionEntryId: collectionEntryId ?? null,
-        paidBy: actor.staffId,
-      };
-      await client.query(
-        `UPDATE rd_instalment
-            SET paid_amount = $1::numeric,
-                status = $2,
-                paid_on = $3,
-                payment_method = $4,
-                reference_number = $5,
-                collection_entry_id = $6,
-                allocation = $7::jsonb,
-                updated_at = now()
-          WHERE id = $8`,
-        [
-          event.newPaidAmount,
-          event.newStatus,
-          paidOn,
-          paymentMethod,
-          referenceNumber,
-          collectionEntryId,
-          JSON.stringify([...prior, eventRecord]),
-          row.id,
-        ],
-      );
-      appliedIds.push(row.id);
-    }
-
-    // Recompose account totals + status from the ledger.
-    await recomputeAccountTotals(client, accountId);
-    const refreshed = await selectRdAccountById(client, accountId);
-    if (!refreshed) throw new NotFoundError('RD account');
-
-    await audit(client, {
-      ...actorAuditBase(actor),
-      requestId: meta.requestId ?? null,
-      action: AUDIT_ACTIONS.RD_INSTALMENT_PAID,
-      entityType: 'rd_account',
-      entityId: accountId,
-      metadata: {
-        accountNumber: account.account_number,
-        amount: input.amount,
-        paidOn,
-        paymentMethod,
-        referenceNumber: referenceNumber ?? null,
-        collectionEntryId: collectionEntryId ?? null,
-        instalmentsCovered: allocationEvents.length,
-        allocations: allocationEvents.map((event) => ({
-          instalmentId: event.row.id,
-          instalmentNumber: event.row.instalment_number,
-          amountPaid: event.amountPaid,
-          statusAfter: event.newStatus,
-        })),
-        totalPaid: refreshed.total_paid,
-        pendingAmount: refreshed.pending_amount,
-        accountStatus: refreshed.status,
-        recordedBy: actor.staffId,
-      },
-    });
-
-    const appliedRows = await selectInstalmentsByIds(client, accountId, appliedIds);
-    const accountView = await loadRdAccountDetail(client, accountId);
-    return { account: accountView, appliedTo: appliedRows.map(toInstalmentView) };
+  return transaction<InstalmentPaymentResult>(async (client) => {
+    return executeRdInstalmentPayment(client, actor, accountId, input, meta);
   });
-  return result;
+}
+
+export async function executeRdInstalmentPayment(
+  client: PoolClient,
+  actor: AuthContext,
+  accountId: string,
+  input: InstalmentPaymentInput,
+  meta: RequestMeta = {},
+): Promise<InstalmentPaymentResult> {
+  const account = await selectRdAccountById(client, accountId);
+  if (!account) throw new NotFoundError('RD account');
+  if (!OPEN_STATUSES.includes(account.status)) {
+    throw new BusinessRuleError(
+      `Instalments can only be recorded on an active or overdue RD account (current status: ${account.status})`,
+      'ACCOUNT_NOT_PAYABLE',
+    );
+  }
+
+  const paidOn = input.paidOn ?? istBusinessDate();
+  const paymentMethod = input.paymentMethod;
+  const referenceNumber = input.referenceNumber ?? null;
+  const collectionEntryId = input.collectionEntryId ?? null;
+
+  // State is kept honest as of the payment date before we touch the money.
+  await sweepMissedInstalments(client, account, actor, meta, paidOn);
+
+  const due = await client.query<InstalmentDueRow>(
+    `SELECT id, instalment_number, due_date::text AS due_date,
+            expected_amount::text AS expected_amount,
+            paid_amount::text AS paid_amount,
+            status, allocation
+       FROM rd_instalment
+      WHERE rd_account_id = $1 AND status IN ('due','partial','missed','overdue')
+      ORDER BY due_date ASC, instalment_number ASC
+      FOR UPDATE`,
+    [accountId],
+  );
+  const dueRows = due.rows;
+  if (dueRows.length === 0) {
+    throw new BusinessRuleError('This RD account has no unpaid instalments', 'NO_DUE_INSTALMENTS');
+  }
+
+  // Allocate the payment across due instalments, oldest first (spec §10.5).
+  const allocationEvents: Array<{
+    row: InstalmentDueRow;
+    amountPaid: string;
+    newPaidAmount: string;
+    newStatus: string;
+  }> = [];
+  let remaining = toCents(input.amount);
+  for (const row of dueRows) {
+    if (remaining <= 0n) break;
+    const outstanding = subMoney(row.expected_amount, row.paid_amount);
+    const outstandingCents = toCents(outstanding);
+    if (remaining >= outstandingCents) {
+      remaining -= outstandingCents;
+      allocationEvents.push({
+        row,
+        amountPaid: outstanding,
+        newPaidAmount: row.expected_amount,
+        newStatus: 'paid',
+      });
+    } else {
+      const partPaid = fromCents(remaining);
+      allocationEvents.push({
+        row,
+        amountPaid: partPaid,
+        newPaidAmount: addMoney(row.paid_amount, partPaid),
+        newStatus: 'partial',
+      });
+      remaining = 0n;
+      break;
+    }
+  }
+
+  if (allocationEvents.length === 0) {
+    throw new BusinessRuleError('This RD account has no unpaid instalments', 'NO_DUE_INSTALMENTS');
+  }
+  if (remaining > 0n) {
+    throw new BusinessRuleError(
+      'Payment exceeds all outstanding instalments. Any excess must be routed to the linked loan account through surplus-transfer (spec §10.1 Follow-up rule)',
+      'EXCESS_PAYMENT_REQUIRES_SURPLUS_TRANSFER',
+    );
+  }
+
+  const appliedIds: string[] = [];
+  for (const event of allocationEvents) {
+    const { row } = event;
+    const prior = Array.isArray(row.allocation) ? (row.allocation as unknown[]) : [];
+    const eventRecord: Record<string, unknown> = {
+      instalmentNumber: row.instalment_number,
+      dueDate: row.due_date,
+      amountPaid: event.amountPaid,
+      newPaidAmount: event.newPaidAmount,
+      statusAfter: event.newStatus,
+      paymentMethod,
+      paidOn,
+      referenceNumber: referenceNumber ?? null,
+      collectionEntryId: collectionEntryId ?? null,
+      paidBy: actor.staffId,
+    };
+    await client.query(
+      `UPDATE rd_instalment
+          SET paid_amount = $1::numeric,
+              status = $2,
+              paid_on = $3,
+              payment_method = $4,
+              reference_number = $5,
+              collection_entry_id = $6,
+              allocation = $7::jsonb,
+              updated_at = now()
+        WHERE id = $8`,
+      [
+        event.newPaidAmount,
+        event.newStatus,
+        paidOn,
+        paymentMethod,
+        referenceNumber,
+        collectionEntryId,
+        JSON.stringify([...prior, eventRecord]),
+        row.id,
+      ],
+    );
+    appliedIds.push(row.id);
+  }
+
+  // Recompose account totals + status from the ledger.
+  await recomputeAccountTotals(client, accountId);
+  const refreshed = await selectRdAccountById(client, accountId);
+  if (!refreshed) throw new NotFoundError('RD account');
+
+  await audit(client, {
+    ...actorAuditBase(actor),
+    requestId: meta.requestId ?? null,
+    action: AUDIT_ACTIONS.RD_INSTALMENT_PAID,
+    entityType: 'rd_account',
+    entityId: accountId,
+    metadata: {
+      accountNumber: account.account_number,
+      amount: input.amount,
+      paidOn,
+      paymentMethod,
+      referenceNumber: referenceNumber ?? null,
+      collectionEntryId: collectionEntryId ?? null,
+      instalmentsCovered: allocationEvents.length,
+      allocations: allocationEvents.map((event) => ({
+        instalmentId: event.row.id,
+        instalmentNumber: event.row.instalment_number,
+        amountPaid: event.amountPaid,
+        statusAfter: event.newStatus,
+      })),
+      totalPaid: refreshed.total_paid,
+      pendingAmount: refreshed.pending_amount,
+      accountStatus: refreshed.status,
+      recordedBy: actor.staffId,
+    },
+  });
+
+  const appliedRows = await selectInstalmentsByIds(client, accountId, appliedIds);
+  const accountView = await loadRdAccountDetail(client, accountId);
+  return { account: accountView, appliedTo: appliedRows.map(toInstalmentView) };
 }
 
 // ---------------------------------------------------------------------------

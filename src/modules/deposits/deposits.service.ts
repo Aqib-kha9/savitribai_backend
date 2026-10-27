@@ -1252,6 +1252,71 @@ export async function approveAccount(
 // Ledger — deposit / withdrawal posting
 // ---------------------------------------------------------------------------
 
+export async function executeSavingsDeposit(
+  client: PoolClient,
+  actor: AuthContext,
+  accountId: string,
+  input: {
+    amount: string;
+    paymentMethod: PaymentMethod;
+    referenceNumber?: string | undefined;
+    description?: string | undefined;
+    valueDate?: string | undefined;
+  },
+  meta: RequestMeta = {},
+): Promise<TransactionView> {
+  const account = await selectAccountById(client, accountId);
+  if (!account) throw new NotFoundError('Savings account');
+  if (account.status !== 'active') {
+    throw new BusinessRuleError(
+      'Transactions can only be posted to an active savings account',
+      'ACCOUNT_NOT_ACTIVE',
+    );
+  }
+
+  const direction: Direction = 'credit';
+  const valueDate = input.valueDate ?? istBusinessDate();
+  const balanceAfter = addMoney(account.current_balance, input.amount);
+  if (account.product_max_balance && compareMoney(balanceAfter, account.product_max_balance) > 0) {
+    throw new BusinessRuleError(
+      `Balance after deposit would exceed the product maximum of ${account.product_max_balance}`,
+      'MAX_BALANCE_EXCEEDED',
+    );
+  }
+  const transactionId = await insertLedgerEntry(client, {
+    accountId,
+    accountNumber: account.account_number,
+    transactionType: 'deposit',
+    direction,
+    amount: input.amount,
+    balanceAfter,
+    valueDate,
+    paymentMethod: input.paymentMethod,
+    referenceNumber: input.referenceNumber,
+    description: input.description,
+    actor,
+  });
+  await audit(client, {
+    ...actorAuditBase(actor),
+    requestId: meta.requestId ?? null,
+    action: AUDIT_ACTIONS.SAVINGS_TRANSACTION_POSTED,
+    entityType: 'account_transaction',
+    entityId: transactionId,
+    metadata: {
+      savingsAccountId: accountId,
+      accountNumber: account.account_number,
+      transactionType: 'deposit',
+      direction,
+      amount: input.amount,
+      balanceAfter,
+      valueDate,
+      paymentMethod: input.paymentMethod,
+      postedBy: actor.staffId,
+    },
+  });
+  return loadTransaction(client, transactionId);
+}
+
 export async function postTransaction(
   actor: AuthContext,
   accountId: string,
@@ -1269,52 +1334,13 @@ export async function postTransaction(
     }
 
     const isDeposit = input.transactionType === 'deposit';
-    const direction: Direction = isDeposit ? 'credit' : 'debit';
-    const valueDate = input.valueDate ?? istBusinessDate();
-
     if (isDeposit) {
-      const balanceAfter = addMoney(account.current_balance, input.amount);
-      if (account.product_max_balance && compareMoney(balanceAfter, account.product_max_balance) > 0) {
-        throw new BusinessRuleError(
-          `Balance after deposit would exceed the product maximum of ${account.product_max_balance}`,
-          'MAX_BALANCE_EXCEEDED',
-        );
-      }
-      const transactionId = await insertLedgerEntry(client, {
-        accountId,
-        accountNumber: account.account_number,
-        transactionType: 'deposit',
-        direction,
-        amount: input.amount,
-        balanceAfter,
-        valueDate,
-        paymentMethod: input.paymentMethod,
-        referenceNumber: input.referenceNumber,
-        description: input.description,
-        actor,
-      });
-      await audit(client, {
-        ...actorAuditBase(actor),
-        requestId: meta.requestId ?? null,
-        action: AUDIT_ACTIONS.SAVINGS_TRANSACTION_POSTED,
-        entityType: 'account_transaction',
-        entityId: transactionId,
-        metadata: {
-          savingsAccountId: accountId,
-          accountNumber: account.account_number,
-          transactionType: 'deposit',
-          direction,
-          amount: input.amount,
-          balanceAfter,
-          valueDate,
-          paymentMethod: input.paymentMethod,
-          postedBy: actor.staffId,
-        },
-      });
-      return loadTransaction(client, transactionId);
+      return executeSavingsDeposit(client, actor, accountId, input, meta);
     }
 
     // Withdrawal path.
+    const direction: Direction = 'debit';
+    const valueDate = input.valueDate ?? istBusinessDate();
     if (compareMoney(input.amount, account.current_balance) > 0) {
       throw new BusinessRuleError('Withdrawal amount exceeds the available balance', 'INSUFFICIENT_BALANCE');
     }

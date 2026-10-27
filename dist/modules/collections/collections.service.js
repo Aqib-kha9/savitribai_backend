@@ -2,9 +2,13 @@ import { query, transaction } from '../../database/client.js';
 import { randomUUID } from 'node:crypto';
 import { appendAuditEvent, AUDIT_ACTIONS, } from '../../audit/audit-writer.js';
 import { istBusinessDate } from '../../core/time.js';
+import { logger } from '../../core/logger.js';
 import { BadRequestError, BusinessRuleError, ConflictError, NotFoundError, } from '../../core/errors.js';
 import { allocateSequence } from '../../database/numbering.js';
 import { evaluateOfflineLate, lookupCollectionReplay, lookupVisitReplay, } from '../sync/sync.service.js';
+import { executeLoanRepayment } from '../loans/loans.service.js';
+import { executeSavingsDeposit } from '../deposits/deposits.service.js';
+import { executeRdInstalmentPayment } from '../rd/rd.service.js';
 // ---------------------------------------------------------------------------
 // Local audit helpers (same transaction as the mutation — spec §6.3)
 // ---------------------------------------------------------------------------
@@ -429,6 +433,75 @@ async function insertCollectionEntry(client, p) {
     return row;
 }
 // ---------------------------------------------------------------------------
+// Account ledger integration: post collection directly to loan / savings / RD
+// ---------------------------------------------------------------------------
+function mapCollectionModeToPaymentMethod(mode) {
+    const m = mode.toLowerCase();
+    if (m === 'upi')
+        return 'upi';
+    if (m === 'neft')
+        return 'neft';
+    if (m === 'rtgs')
+        return 'rtgs';
+    if (m === 'cheque')
+        return 'cheque';
+    return 'cash';
+}
+export async function applyCollectionEntryToAccount(client, collectionId, actor, meta = {}) {
+    const row = await client.query(`SELECT ce.id, ce.product_type, ce.loan_id, ce.savings_account_id, ce.rd_account_id,
+            ce.amount::text AS amount, ce.mode, ce.business_date::text AS business_date,
+            ce.status, ce.is_deleted, ce.posted_at,
+            cr.receipt_number
+       FROM collection_entry ce
+       LEFT JOIN collection_receipt cr ON cr.collection_id = ce.id
+      WHERE ce.id = $1
+      FOR UPDATE`, [collectionId]);
+    const entry = row.rows[0];
+    if (!entry)
+        return false;
+    if (entry.is_deleted)
+        return false;
+    if (entry.posted_at)
+        return false; // already applied, idempotent!
+    const paymentMethod = mapCollectionModeToPaymentMethod(entry.mode);
+    const refNum = entry.receipt_number ?? `COL-${entry.id.slice(0, 8).toUpperCase()}`;
+    if (entry.product_type === 'loan' && entry.loan_id) {
+        await executeLoanRepayment(client, actor, entry.loan_id, {
+            amount: entry.amount,
+            paidOn: entry.business_date,
+            paymentMethod,
+            referenceNumber: refNum,
+            collectionEntryId: entry.id,
+        }, meta);
+    }
+    else if ((entry.product_type === 'savingsDeposit' || entry.product_type === 'dailyDeposit') &&
+        entry.savings_account_id) {
+        await executeSavingsDeposit(client, actor, entry.savings_account_id, {
+            amount: entry.amount,
+            paymentMethod,
+            referenceNumber: refNum,
+            description: `Doorstep collection ${refNum}`,
+            valueDate: entry.business_date,
+        }, meta);
+    }
+    else if (entry.product_type === 'recurringDeposit' && entry.rd_account_id) {
+        await executeRdInstalmentPayment(client, actor, entry.rd_account_id, {
+            amount: entry.amount,
+            paidOn: entry.business_date,
+            paymentMethod,
+            referenceNumber: refNum,
+            collectionEntryId: entry.id,
+        }, meta);
+    }
+    await client.query(`UPDATE collection_entry
+        SET posted_at = now(),
+            posted_reference = $2,
+            status = 'accepted',
+            updated_at = now()
+      WHERE id = $1`, [entry.id, refNum]);
+    return true;
+}
+// ---------------------------------------------------------------------------
 // Push path: submit collection (POST /collections) — agent mobile
 // ---------------------------------------------------------------------------
 export async function submitCollection(actor, input, idempotencyKey, meta = {}) {
@@ -462,7 +535,7 @@ export async function submitCollection(actor, input, idempotencyKey, meta = {}) 
                 productLabel: target.productLabel,
                 amount: input.amount,
                 mode: input.mode,
-                status: 'waiting',
+                status: 'accepted',
                 isPartial: input.isPartial,
                 isAdvance: input.isAdvance,
                 instrumentRef: input.instrumentRef ?? null,
@@ -478,6 +551,8 @@ export async function submitCollection(actor, input, idempotencyKey, meta = {}) 
                 acknowledged: input.acknowledged,
                 receiptKind: input.receiptKind,
             });
+            // Immediately post to the target product account (loan repayment, savings deposit, or RD instalment)
+            await applyCollectionEntryToAccount(client, created.id, actor, meta);
             const submissionRow = await selectCollectionById(client, created.id, agent.id);
             if (!submissionRow)
                 throw new NotFoundError('Collection');
@@ -639,6 +714,9 @@ export async function reviewCollection(actor, id, input, meta = {}) {
         await client.query(`UPDATE collection_entry
           SET status = $2, updated_at = now()
         WHERE id = $1`, [id, input.decision]);
+        if (input.decision === 'accepted') {
+            await applyCollectionEntryToAccount(client, id, actor, meta);
+        }
         // collection_review.collection_id is UNIQUE — a follow-up review replaces
         // the earlier requiresReview record.
         await client.query(`INSERT INTO collection_review (collection_id, reviewed_by, decision, remarks)
@@ -686,6 +764,11 @@ export async function bulkReviewCollections(actor, input, meta = {}) {
         await client.query(`UPDATE collection_entry
           SET status = $2, updated_at = now()
         WHERE id = ANY($1::uuid[])`, [eligibleIds, input.decision]);
+        if (input.decision === 'accepted') {
+            for (const row of eligible) {
+                await applyCollectionEntryToAccount(client, row.id, actor, meta);
+            }
+        }
         for (const row of eligible) {
             await client.query(`INSERT INTO collection_review (collection_id, reviewed_by, decision, remarks)
          VALUES ($1, $2, $3, $4)
@@ -1045,6 +1128,7 @@ export async function approveEmergencyCollection(actor, input, meta = {}) {
             acknowledged: input.acknowledged,
             receiptKind: input.receiptKind,
         });
+        await applyCollectionEntryToAccount(client, created.id, actor, meta);
         await audit(client, {
             ...actorAuditBase(actor),
             requestId: meta.requestId ?? null,
@@ -1142,4 +1226,57 @@ export async function getCollectionTotals(actor, queryInput, meta = {}) {
         byProductType: productResult.rows,
         byMode: modeResult.rows,
     };
+}
+// ---------------------------------------------------------------------------
+// Self-healing / automatic startup backfill: apply any unposted collections
+// ---------------------------------------------------------------------------
+export async function backfillUnpostedCollections() {
+    // Query all eligible unposted collections
+    const unposted = await query(`SELECT ce.id, ce.product_type, ce.amount::text AS amount, ce.status, ce.business_date::text AS business_date
+       FROM collection_entry ce
+      WHERE ce.posted_at IS NULL
+        AND NOT ce.is_deleted
+        AND ce.status IN ('accepted', 'waiting')
+      ORDER BY ce.business_date ASC, ce.created_at ASC`);
+    if (unposted.rows.length === 0) {
+        return { totalFound: 0, totalApplied: 0, failedCount: 0 };
+    }
+    // Resolve a staff member to act as the audit actor
+    const staffRes = await query(`SELECT s.id, s.staff_code, s.full_name
+       FROM staff s
+       JOIN role r ON r.id = s.role_id
+      WHERE r.code IN ('super_admin', 'managing_director', 'manager')
+      ORDER BY s.is_protected DESC, s.created_at ASC
+      LIMIT 1`);
+    const staff = staffRes.rows[0];
+    const actor = {
+        staffId: staff?.id ?? '00000000-0000-0000-0000-000000000001',
+        staffCode: staff?.staff_code ?? 'ROOT-001',
+        fullName: staff?.full_name ?? 'Super Administrator',
+        role: 'managing_director',
+        branchId: null,
+        isProtected: true,
+        source: 'admin_web',
+        sessionId: 'system-backfill',
+        deviceId: null,
+        permissions: [],
+    };
+    let totalApplied = 0;
+    let failedCount = 0;
+    for (const row of unposted.rows) {
+        try {
+            await transaction(async (client) => {
+                await applyCollectionEntryToAccount(client, row.id, actor, {
+                    requestId: 'startup-backfill',
+                });
+            });
+            totalApplied++;
+        }
+        catch (error) {
+            failedCount++;
+            logger.error({ collectionId: row.id, productType: row.product_type, amount: row.amount, error }, 'Failed to backfill collection to account');
+        }
+    }
+    logger.info({ totalFound: unposted.rows.length, totalApplied, failedCount }, 'Completed backfill of unposted doorstep collections to accounts');
+    return { totalFound: unposted.rows.length, totalApplied, failedCount };
 }
