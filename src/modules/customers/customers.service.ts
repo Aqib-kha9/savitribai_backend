@@ -1497,13 +1497,13 @@ async function applyStatusChange(
     await client.query(
       `UPDATE rd_account
           SET status = 'cancelled', closed_on = CURRENT_DATE, updated_at = now()
-        WHERE customer_id = $2 AND status NOT IN ('completed', 'matured', 'closed_early', 'cancelled')`,
+        WHERE customer_id = $1 AND status NOT IN ('completed', 'matured', 'closed_early', 'cancelled')`,
       [customerId],
     );
     await client.query(
       `UPDATE fd_account
           SET status = 'closed', closed_on = CURRENT_DATE, updated_at = now()
-        WHERE customer_id = $2 AND status NOT IN ('matured', 'closed_early', 'closed')`,
+        WHERE customer_id = $1 AND status NOT IN ('matured', 'closed_early', 'closed')`,
       [customerId],
     );
   }

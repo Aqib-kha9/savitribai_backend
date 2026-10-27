@@ -951,10 +951,10 @@ async function applyStatusChange(client, actor, customerId, toStatus, reason, me
         WHERE customer_id = $2 AND status != 'closed'`, [`Customer profile deleted: ${reason}`, customerId]);
         await client.query(`UPDATE rd_account
           SET status = 'cancelled', closed_on = CURRENT_DATE, updated_at = now()
-        WHERE customer_id = $2 AND status NOT IN ('completed', 'matured', 'closed_early', 'cancelled')`, [customerId]);
+        WHERE customer_id = $1 AND status NOT IN ('completed', 'matured', 'closed_early', 'cancelled')`, [customerId]);
         await client.query(`UPDATE fd_account
           SET status = 'closed', closed_on = CURRENT_DATE, updated_at = now()
-        WHERE customer_id = $2 AND status NOT IN ('matured', 'closed_early', 'closed')`, [customerId]);
+        WHERE customer_id = $1 AND status NOT IN ('matured', 'closed_early', 'closed')`, [customerId]);
     }
     await client.query(`INSERT INTO customer_status_history
        (customer_id, from_status, to_status, reason, changed_by)
