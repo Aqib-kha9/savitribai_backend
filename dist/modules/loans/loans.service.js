@@ -95,7 +95,11 @@ const LOAN_COLUMNS = `
   l.outstanding_amount::text AS outstanding_amount,
   l.next_due_date::text AS next_due_date,
   l.against_fd_account_id, l.closed_on::text AS closed_on, l.closure_type,
-  l.created_at, l.updated_at`;
+  l.created_at, l.updated_at,
+  (SELECT COUNT(*)::int FROM loan_instalment li WHERE li.loan_id = l.id) AS total_instalments,
+  (SELECT COUNT(*)::int FROM loan_instalment li WHERE li.loan_id = l.id AND li.status = 'paid') AS paid_instalments,
+  (SELECT COUNT(*)::int FROM loan_instalment li WHERE li.loan_id = l.id AND li.status IN ('due','partial','missed','overdue')) AS pending_instalments,
+  (SELECT COALESCE(SUM(li.expected_amount - li.paid_amount), 0)::text FROM loan_instalment li WHERE li.loan_id = l.id AND li.status IN ('due','partial','missed','overdue') AND li.due_date <= CURRENT_DATE) AS due_amount`;
 const LOAN_FROM = `
   FROM loan l
   JOIN loan_application la ON la.id = l.application_id
@@ -384,6 +388,10 @@ function toLoanView(row) {
         closureType: row.closure_type,
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
+        totalInstalments: row.total_instalments !== undefined ? Number(row.total_instalments) : undefined,
+        paidInstalments: row.paid_instalments !== undefined ? Number(row.paid_instalments) : undefined,
+        pendingInstalments: row.pending_instalments !== undefined ? Number(row.pending_instalments) : undefined,
+        dueAmount: row.due_amount !== undefined ? Number(row.due_amount) : undefined,
     };
 }
 async function selectLoanById(client, loanId) {
@@ -731,6 +739,19 @@ export async function listLoans(actor, queryInput, meta = {}) {
         params.push(value);
         return `$${params.length}`;
     };
+    // Self-heal: keep active vs overdue in sync with actual unpaid past-due instalments
+    await query(`
+    UPDATE loan l
+       SET status = 'active', updated_at = now()
+     WHERE l.status = 'overdue'
+       AND NOT EXISTS (
+         SELECT 1 FROM loan_instalment li
+          WHERE li.loan_id = l.id
+            AND li.status IN ('due','partial','missed','overdue')
+            AND li.expected_amount > li.paid_amount
+            AND li.due_date < CURRENT_DATE
+       )
+  `).catch(() => { });
     if (queryInput.search) {
         const escaped = queryInput.search.replace(/[\\%_]/g, (ch) => `\\${ch}`);
         const pattern = `%${escaped}%`;
