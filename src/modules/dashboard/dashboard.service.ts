@@ -594,7 +594,7 @@ async function getBankTotals(): Promise<BankTotalsView> {
     query<{ product_kind: string; count: number; balance: number }>(
       `SELECT
          CASE
-           WHEN dp.code IN ('DAILY-180', 'SAV-DLY') THEN 'daily_deposit'
+           WHEN dp.code = 'DAILY-180' THEN 'daily_deposit'
            ELSE 'savings'
          END AS product_kind,
          COUNT(*)::int AS count,

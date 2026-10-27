@@ -57,7 +57,7 @@ const PERMISSION_DESCRIPTIONS = {
 };
 /** Number sequence rows (spec §4) — organisation-wide, never reset, no reuse. */
 const NUMBER_SEQUENCES = [
-    { entityType: 'savings_account', prefix: 'S.A.L.A', padding: 4, resetPeriod: 'never' },
+    { entityType: 'savings_account', prefix: 'SBA', padding: 4, resetPeriod: 'never' },
     { entityType: 'daily_deposit', prefix: 'DDA', padding: 4, resetPeriod: 'never' },
     { entityType: 'rd_account', prefix: 'R.D.A', padding: 4, resetPeriod: 'never' },
     { entityType: 'fd_account', prefix: 'D.A', padding: 4, resetPeriod: 'never' },

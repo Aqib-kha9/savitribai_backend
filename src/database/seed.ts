@@ -89,7 +89,7 @@ const NUMBER_SEQUENCES: Array<{
   padding: number;
   resetPeriod: 'never' | 'daily' | 'monthly' | 'yearly';
 }> = [
-  { entityType: 'savings_account', prefix: 'S.A.L.A', padding: 4, resetPeriod: 'never' },
+  { entityType: 'savings_account', prefix: 'SBA', padding: 4, resetPeriod: 'never' },
   { entityType: 'daily_deposit', prefix: 'DDA', padding: 4, resetPeriod: 'never' },
   { entityType: 'rd_account', prefix: 'R.D.A', padding: 4, resetPeriod: 'never' },
   { entityType: 'fd_account', prefix: 'D.A', padding: 4, resetPeriod: 'never' },

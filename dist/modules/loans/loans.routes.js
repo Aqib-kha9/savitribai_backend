@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authenticate, requirePermission, requireRole } from '../../middleware/auth.js';
 import { parse, validateBody } from '../../middleware/validate.js';
 import { UnauthorizedError } from '../../core/errors.js';
-import { listProducts, createProduct, listApplications, listLoans, createApplication, cancelApplication, purgeApplication, updateApplication, recommendApplication, approveApplication, disburseLoan, getLoan, getSchedule, recordRepayment, correctRepayment, rescheduleLoan, settleLoan, writeOffLoan, transferLoan, grantWaiver, releaseSurplus, getStatements, } from './loans.service.js';
+import { listProducts, createProduct, listApplications, listLoans, createApplication, cancelApplication, purgeApplication, deleteLoan, updateApplication, recommendApplication, approveApplication, disburseLoan, getLoan, getSchedule, recordRepayment, correctRepayment, rescheduleLoan, settleLoan, writeOffLoan, transferLoan, grantWaiver, releaseSurplus, getStatements, } from './loans.service.js';
 import { createProductSchema, listProductsQuerySchema, createApplicationSchema, cancelApplicationSchema, updateApplicationSchema, listApplicationsQuerySchema, listLoansQuerySchema, recommendSchema, approveSchema, disburseSchema, recordRepaymentSchema, correctRepaymentSchema, rescheduleSchema, settleSchema, writeOffSchema, transferSchema, waiverSchema, surplusReleaseSchema, scheduleQuerySchema, statementsQuerySchema, idParamSchema, uuidSchema, } from './loans.schemas.js';
 /**
  * Loans HTTP surface (docs/backend-master-spec.md §12).
@@ -167,6 +167,13 @@ loansRouter.get('/:id', authenticate, requirePermission('loans.read'), async (re
     const actor = authOf(request);
     const detail = await getLoan(actor, loanIdParam(request), requestMeta(request));
     response.status(200).json(detail);
+});
+// DELETE /api/v1/loans/:id — permanently delete/purge a loan account (President, VP, MD, Super Admin).
+loansRouter.delete('/:id', authenticate, requireRole('president', 'vice_president', 'managing_director', 'super_admin'), async (request, response) => {
+    const actor = authOf(request);
+    const reason = request.body?.reason || request.query?.reason || 'Loan account deleted by management';
+    const result = await deleteLoan(actor, loanIdParam(request), reason, requestMeta(request));
+    response.status(200).json(result);
 });
 // GET /api/v1/loans/:id/schedule — repayment schedule (due dates shifted to
 // the next working day for Sundays, spec §12.5.2).

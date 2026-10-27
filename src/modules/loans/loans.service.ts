@@ -1810,6 +1810,87 @@ export async function purgeApplication(
 }
 
 /**
+ * Permanently delete / purge a live loan account (spec §12 administrative override).
+ * Reserved for super_admin, managing_director, president, vice_president.
+ * Safely unlinks any collection entries and removes instalments, collateral, guarantors,
+ * surplus and restructure records so mistaken or duplicate loan accounts can be removed.
+ */
+export async function deleteLoan(
+  actor: AuthContext,
+  loanId: string,
+  reason: string,
+  meta: RequestMeta = {},
+): Promise<{ success: boolean; loanNumber: string; message: string }> {
+  return transaction(async (client) => {
+    const loanRes = await client.query<{
+      id: string;
+      loan_number: string;
+      application_id: string;
+      customer_id: string;
+      status: string;
+    }>(
+      `SELECT id, loan_number, application_id, customer_id, status FROM loan WHERE id = $1`,
+      [loanId],
+    );
+    const loan = loanRes.rows[0];
+    if (!loan) throw new NotFoundError('Loan');
+
+    // 1. Unlink any collection entries referencing this loan
+    await client.query(
+      `UPDATE collection_entry SET loan_id = NULL WHERE loan_id = $1`,
+      [loanId],
+    );
+
+    // 2. Unlink any RD accounts referencing this loan
+    await client.query(
+      `UPDATE rd_account SET linked_loan_id = NULL WHERE linked_loan_id = $1`,
+      [loanId],
+    );
+
+    // 3. Delete dependent child records
+    await client.query(`DELETE FROM loan_surplus WHERE loan_id = $1`, [loanId]);
+    await client.query(`DELETE FROM loan_restructure WHERE loan_id = $1`, [loanId]);
+    await client.query(`DELETE FROM loan_writeoff WHERE loan_id = $1`, [loanId]);
+    await client.query(`DELETE FROM loan_instalment WHERE loan_id = $1`, [loanId]);
+    await client.query(`DELETE FROM loan_guarantor WHERE loan_id = $1`, [loanId]);
+    await client.query(`DELETE FROM loan_collateral WHERE loan_id = $1`, [loanId]);
+
+    // 4. Delete the loan
+    await client.query(`DELETE FROM loan WHERE id = $1`, [loanId]);
+
+    // 5. Update or cancel the associated application
+    if (loan.application_id) {
+      await client.query(
+        `UPDATE loan_application SET status = 'cancelled', rejection_reason = $1 WHERE id = $2`,
+        [`Application cancelled because disbursed loan was purged/deleted: ${reason}`, loan.application_id],
+      );
+    }
+
+    // 6. Audit event
+    await audit(client, {
+      ...actorAuditBase(actor),
+      requestId: meta.requestId ?? null,
+      action: 'loans.loan.deleted',
+      entityType: 'loan',
+      entityId: loanId,
+      metadata: {
+        loanNumber: loan.loan_number,
+        customerId: loan.customer_id,
+        reason,
+        deletedBy: actor.staffId,
+        purged: true,
+      },
+    });
+
+    return {
+      success: true,
+      loanNumber: loan.loan_number,
+      message: `Loan ${loan.loan_number} has been deleted successfully.`,
+    };
+  });
+}
+
+/**
  * Update details of an undisbursed loan application.
  */
 export async function updateApplication(

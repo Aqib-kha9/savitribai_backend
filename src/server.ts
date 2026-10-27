@@ -153,7 +153,44 @@ async function runSelfHealingMigrations(): Promise<void> {
         );
       }
     }
-    console.log('Self-healing migrations: receipt sequences configured to never reset & synced.');
+
+    // Ensure savings_account number sequence uses prefix SBA
+    await query(`
+      UPDATE number_sequence
+         SET prefix = 'SBA'
+       WHERE entity_type = 'savings_account';
+    `);
+
+    // Rename SAV-DLY product to avoid confusion with Daily Deposit (DD)
+    await query(`
+      UPDATE deposit_product
+         SET name = 'Doorstep Bachat Khata (Doorstep Savings)',
+             description = 'Doorstep collection savings account for daily/regular-income customers'
+       WHERE code = 'SAV-DLY';
+    `);
+
+    // Convert any savings accounts created under SAV-STD or SAV-DLY that were mistakenly assigned DDA numbers
+    await query(`
+      UPDATE savings_account
+         SET account_number = REPLACE(account_number, 'DDA', 'SBA'),
+             maturity_date = NULL
+       WHERE product_id IN (SELECT id FROM deposit_product WHERE code IN ('SAV-STD', 'SAV-DLY'))
+         AND account_number LIKE 'DDA%';
+    `);
+
+    await query(`
+      UPDATE collection_receipt
+         SET account_number = REPLACE(account_number, 'DDA', 'SBA')
+       WHERE account_number LIKE 'DDA%'
+         AND collection_id IN (
+           SELECT ce.id FROM collection_entry ce
+            JOIN savings_account sa ON sa.id = ce.savings_account_id
+            JOIN deposit_product dp ON dp.id = sa.product_id
+           WHERE dp.code IN ('SAV-STD', 'SAV-DLY')
+         );
+    `);
+
+    console.log('Self-healing migrations: receipt sequences & savings accounts configured and synced.');
   } catch (err) {
     console.warn('Self-healing migration notice:', err);
   }

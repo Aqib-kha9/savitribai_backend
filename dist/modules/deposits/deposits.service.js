@@ -430,7 +430,7 @@ export async function createAccount(actor, input, meta = {}) {
         if (product.max_balance && compareMoney(input.openingAmount, product.max_balance) > 0) {
             throw new BusinessRuleError(`Opening amount exceeds the product maximum of ${product.max_balance}`, 'OPENING_AMOUNT_ABOVE_MAX');
         }
-        const isDaily = product.code === 'SAV-DLY' || product.name.toLowerCase().includes('daily');
+        const isDaily = product.code === 'DAILY-180' || (product.name.toLowerCase().includes('daily') && !product.code.startsWith('SAV-') && !product.name.toLowerCase().includes('saving') && !product.name.toLowerCase().includes('bachat'));
         const seqEntity = isDaily ? 'daily_deposit' : 'savings_account';
         let sequence;
         try {
@@ -446,7 +446,7 @@ export async function createAccount(actor, input, meta = {}) {
         // rates are applied by editing the account — spec §9.1).
         const interestRate = input.interestRate ?? product.interest_rate;
         let maturityDate = input.maturityDate ?? null;
-        if (!maturityDate && (product.code === 'DAILY-180' || product.name.toLowerCase().includes('180') || isDaily)) {
+        if (!maturityDate && isDaily) {
             maturityDate = addDays(openedOn, 180);
         }
         let accountId;

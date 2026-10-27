@@ -1305,8 +1305,7 @@ export async function getMyAssignments(
   for (const row of savings.rows) {
     const bucket = productsByCustomer.get(row.customer_id) ?? [];
     const isDaily = row.account_number.startsWith('DDA') ||
-                    (row.product_code ?? '') === 'SAV-DLY' ||
-                    (row.product_name ?? '').toLowerCase().includes('daily');
+                    (row.product_code ?? '') === 'DAILY-180';
     bucket.push({
       id: row.id,
       type: isDaily ? 'dailyDeposit' : 'savingsDeposit',

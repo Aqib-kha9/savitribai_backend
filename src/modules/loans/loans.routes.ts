@@ -12,6 +12,7 @@ import {
   createApplication,
   cancelApplication,
   purgeApplication,
+  deleteLoan,
   updateApplication,
   recommendApplication,
   approveApplication,
@@ -294,6 +295,19 @@ loansRouter.get('/:id', authenticate, requirePermission('loans.read'), async (re
   const detail = await getLoan(actor, loanIdParam(request), requestMeta(request));
   response.status(200).json(detail);
 });
+
+// DELETE /api/v1/loans/:id — permanently delete/purge a loan account (President, VP, MD, Super Admin).
+loansRouter.delete(
+  '/:id',
+  authenticate,
+  requireRole('president', 'vice_president', 'managing_director', 'super_admin'),
+  async (request, response) => {
+    const actor = authOf(request);
+    const reason = (request.body?.reason as string) || (request.query?.reason as string) || 'Loan account deleted by management';
+    const result = await deleteLoan(actor, loanIdParam(request), reason, requestMeta(request));
+    response.status(200).json(result);
+  },
+);
 
 // GET /api/v1/loans/:id/schedule — repayment schedule (due dates shifted to
 // the next working day for Sundays, spec §12.5.2).

@@ -388,10 +388,10 @@ async function insertCollectionEntry(client, p) {
     else if (p.productType === 'recurringDeposit') {
         receiptSeq = 'receipt_rd';
     }
-    else if (p.productType === 'dailyDeposit' || p.accountNumber.startsWith('DDA') || p.productLabel.toLowerCase().includes('daily')) {
+    else if (p.productType === 'dailyDeposit' || p.accountNumber.startsWith('DDA') || (p.productLabel.toLowerCase().includes('daily') && !p.productLabel.toLowerCase().includes('saving') && !p.productLabel.toLowerCase().includes('bachat'))) {
         receiptSeq = 'receipt_dd';
     }
-    else if (p.productType === 'savingsDeposit') {
+    else if (p.productType === 'savingsDeposit' || p.accountNumber.startsWith('SBA') || p.accountNumber.startsWith('S.A.L.A')) {
         receiptSeq = 'receipt_sb';
     }
     let sequence;
