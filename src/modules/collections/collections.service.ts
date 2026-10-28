@@ -1015,7 +1015,7 @@ export async function submitCollection(
         productLabel: target.productLabel,
         amount: input.amount,
         mode: input.mode,
-        status: 'accepted',
+        status: 'waiting',
         isPartial: input.isPartial,
         isAdvance: input.isAdvance,
         instrumentRef: input.instrumentRef ?? null,
@@ -1031,9 +1031,6 @@ export async function submitCollection(
         acknowledged: input.acknowledged,
         receiptKind: input.receiptKind,
       });
-
-      // Immediately post to the target product account (loan repayment, savings deposit, or RD instalment)
-      await applyCollectionEntryToAccount(client, created.id, actor, meta);
 
       const submissionRow = await selectCollectionById(client, created.id, agent.id);
       if (!submissionRow) throw new NotFoundError('Collection');
@@ -1922,7 +1919,7 @@ export async function backfillUnpostedCollections(): Promise<{
        FROM collection_entry ce
       WHERE ce.posted_at IS NULL
         AND NOT ce.is_deleted
-        AND ce.status IN ('accepted', 'waiting')
+        AND ce.status = 'accepted'
       ORDER BY ce.business_date ASC, ce.created_at ASC`,
   );
 
