@@ -122,6 +122,7 @@ export interface SubmissionView {
   accountId: string | null;
   accountNumber: string | null;
   productLabel: string | null;
+  totalCollectedSoFar?: number | null;
 }
 
 /**
@@ -332,6 +333,7 @@ type CollectionSelectRow = {
   receipt_number: string | null;
   receipt_kind: string | null;
   acknowledged: boolean;
+  total_collected_so_far?: number | null;
   review_decision: string | null;
   review_remarks: string | null;
   reviewed_at: Date | null;
@@ -353,6 +355,7 @@ const COLLECTION_SELECT = `ce.id, ce.idempotency_key, ce.agent_id, a.agent_code,
       COALESCE(sa.id, ra.id, l.id) AS account_id,
       COALESCE(sa.account_number, ra.account_number, l.loan_number) AS account_number,
       COALESCE(dp.name, rs.name, lp.name) AS product_label,
+      COALESCE(l.total_paid, ra.total_paid, sa.current_balance, 0)::float8 AS total_collected_so_far,
       cr.receipt_number, cr.receipt_kind, COALESCE(cr.acknowledged, false) AS acknowledged,
       rv.decision AS review_decision, rv.remarks AS review_remarks, rv.reviewed_at`;
 
@@ -398,6 +401,7 @@ function toSubmissionView(row: CollectionSelectRow): SubmissionView {
     accountId: row.account_id,
     accountNumber: row.account_number,
     productLabel: row.product_label,
+    totalCollectedSoFar: row.total_collected_so_far != null ? Number(row.total_collected_so_far) : null,
   };
 }
 
