@@ -546,6 +546,18 @@ async function recomputeLoanTotals(client, loanId) {
             END,
             updated_at = now()
       WHERE id = $5`, [totals.total_paid, totals.outstanding, totals.next_due_date, totals.overdue_outstanding, loanId]);
+    if (compareMoney(totals.outstanding, '0.00') <= 0) {
+        const loanCheck = await client.query(`SELECT against_fd_account_id FROM loan WHERE id = $1`, [loanId]);
+        const fdId = loanCheck.rows[0]?.against_fd_account_id;
+        if (fdId) {
+            await client.query(`UPDATE fd_lien
+            SET status = 'released', released_on = now(), updated_at = now()
+          WHERE fd_account_id = $1 AND status = 'active'`, [fdId]);
+            await client.query(`UPDATE fd_account
+            SET status = 'active', lien_amount = '0.00', updated_at = now()
+          WHERE id = $1 AND status = 'under_lien'`, [fdId]);
+        }
+    }
     return totals;
 }
 /**
@@ -1231,7 +1243,7 @@ export async function disburseLoan(actor, applicationId, input, meta = {}) {
             const next = nextStep(cursor, frequency);
             if (next > maturity)
                 break;
-            dueDates.push(toWorkingDay(next));
+            dueDates.push(frequency === 'daily' ? next : toWorkingDay(next));
             cursor = next;
         }
         if (dueDates.length === 0) {
@@ -1885,7 +1897,7 @@ export async function rescheduleLoan(actor, loanId, input, meta = {}) {
             const next = nextStep(cursor, frequency);
             if (next > maturity)
                 break;
-            dueDates.push(toWorkingDay(next));
+            dueDates.push(frequency === 'daily' ? next : toWorkingDay(next));
             cursor = next;
         }
         if (dueDates.length === 0) {
@@ -2015,6 +2027,14 @@ export async function settleLoan(actor, loanId, input, meta = {}) {
               closure_type = 'settled',
               updated_at = now()
         WHERE id = $3`, [totals.total_paid, settledOn, loanId]);
+        if (loan.against_fd_account_id) {
+            await client.query(`UPDATE fd_lien
+            SET status = 'released', released_on = now(), released_by = $1, updated_at = now()
+          WHERE fd_account_id = $2 AND status = 'active'`, [actor.staffId, loan.against_fd_account_id]);
+            await client.query(`UPDATE fd_account
+            SET status = 'active', lien_amount = '0.00', updated_at = now()
+          WHERE id = $1 AND status = 'under_lien'`, [loan.against_fd_account_id]);
+        }
         await audit(client, {
             ...actorAuditBase(actor),
             requestId: meta.requestId ?? null,
@@ -2070,6 +2090,14 @@ export async function writeOffLoan(actor, loanId, input, meta = {}) {
           SET status = 'written_off',
               updated_at = now()
         WHERE id = $1`, [loanId]);
+        if (loan.against_fd_account_id) {
+            await client.query(`UPDATE fd_lien
+            SET status = 'released', released_on = now(), released_by = $1, updated_at = now()
+          WHERE fd_account_id = $2 AND status = 'active'`, [actor.staffId, loan.against_fd_account_id]);
+            await client.query(`UPDATE fd_account
+            SET status = 'active', lien_amount = '0.00', updated_at = now()
+          WHERE id = $1 AND status = 'under_lien'`, [loan.against_fd_account_id]);
+        }
         await audit(client, {
             ...actorAuditBase(actor),
             requestId: meta.requestId ?? null,

@@ -13,7 +13,7 @@ export const BUSINESS_RULES = {
   HIGH_VALUE_WITHDRAWAL_LIMIT: '200000.00',
   SAVINGS_MIN_BALANCE: '100.00',
   FD_MIN_AMOUNT: '1000.00',
-  FD_MAX_AMOUNT: '100000.00',
+  FD_MAX_AMOUNT: '5000000.00', // Raised to 50 Lakhs (flexible client deposit limit)
   FD_LIEN_LOAN_PERCENT: 85, // loan against FD ≤ 85% of FD amount
   COLLATERAL_LENDING_PERCENT: 60, // loan ≤ 60% of collateral value
   GUARANTOR_MAX_ACTIVE_LOANS: 2,

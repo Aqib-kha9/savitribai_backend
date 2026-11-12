@@ -190,36 +190,132 @@ function stampToDisplay(value) {
 // --- daily_collection_register ---------------------------------------------
 const builderDailyCollectionRegister = async (params) => {
     const range = rangeFor(params);
-    const where = buildWhere([
-        { sql: 'ce.is_deleted = ?', value: false },
-        { sql: 'ce.status = ?', value: 'accepted' },
-        { sql: 'ce.business_date >= ?::date', value: range.from },
-        { sql: 'ce.business_date <= ?::date', value: range.to },
-        { sql: 'ce.agent_id = ?', value: str(params.filters.agent_id) || null },
-        { sql: 'ce.product_type = ?', value: str(params.filters.product_type) || null },
-        { sql: 'ce.mode = ?', value: str(params.filters.mode) || null },
-        { sql: 'ce.business_date = ?::date', value: str(params.filters.business_date) || null },
-    ]);
-    if (str(params.filters.business_date)) {
-        where.params.push(null); // reserved slot alignment (never reached — see below)
+    const agentFilter = str(params.filters.agent_id);
+    const productFilter = str(params.filters.product_type);
+    const modeFilter = str(params.filters.mode);
+    const bDateFilter = str(params.filters.business_date);
+    const queryParams = [range.from, range.to];
+    let agentParamIdx = 0;
+    if (agentFilter) {
+        queryParams.push(agentFilter);
+        agentParamIdx = queryParams.length;
     }
+    let productParamIdx = 0;
+    if (productFilter) {
+        queryParams.push(productFilter);
+        productParamIdx = queryParams.length;
+    }
+    let modeParamIdx = 0;
+    if (modeFilter) {
+        queryParams.push(modeFilter);
+        modeParamIdx = queryParams.length;
+    }
+    let bDateParamIdx = 0;
+    if (bDateFilter) {
+        queryParams.push(bDateFilter);
+        bDateParamIdx = queryParams.length;
+    }
+    const ceWhere = [
+        'ce.is_deleted = false',
+        "ce.status = 'accepted'",
+        'ce.business_date >= $1::date',
+        'ce.business_date <= $2::date',
+    ];
+    if (agentFilter)
+        ceWhere.push(`ce.agent_id = $${agentParamIdx}`);
+    if (productFilter)
+        ceWhere.push(`ce.product_type = $${productParamIdx}`);
+    if (modeFilter)
+        ceWhere.push(`ce.mode = $${modeParamIdx}`);
+    if (bDateFilter)
+        ceWhere.push(`ce.business_date = $${bDateParamIdx}::date`);
+    // Counter manual loan repayments and deposits are included when reporting for all agents / branch
+    const includeCounter = !agentFilter;
     const sql = `
-    SELECT ce.business_date::text AS business_date,
-           a.agent_code,
-           c.full_name,
-           c.customer_number,
-           ce.product_type,
-           ce.mode,
-           ce.amount::text AS amount,
-           ce.status,
-           ce.collected_at
-      FROM collection_entry ce
-      JOIN agent a    ON a.id = ce.agent_id
-      JOIN customer c ON c.id = ce.customer_id
-     WHERE ${where.clause || 'true'}
-     ORDER BY ce.business_date ASC, a.agent_code ASC, ce.created_at ASC
+    WITH all_collections AS (
+      -- Doorstep & collection entry submissions (Agent + MD emergency office approvals)
+      SELECT ce.business_date::text AS business_date,
+             a.agent_code,
+             c.full_name,
+             c.customer_number,
+             ce.product_type,
+             ce.mode,
+             ce.amount::text AS amount,
+             ce.status,
+             ce.collected_at,
+             ce.created_at,
+             CASE 
+               WHEN ce.idempotency_key LIKE 'emergency-%' THEN 'Office Counter (Manual Approval)'
+               ELSE 'Agent Mobile'
+             END AS source_remark
+        FROM collection_entry ce
+        JOIN agent a    ON a.id = ce.agent_id
+        JOIN customer c ON c.id = ce.customer_id
+       WHERE ${ceWhere.join(' AND ')}
+
+      ${includeCounter ? `
+      UNION ALL
+
+      -- Office counter loan repayments (recorded at branch counter without agent app)
+      SELECT al.paid_on::text AS business_date,
+             'OFFICE' AS agent_code,
+             c.full_name,
+             c.customer_number,
+             'loan' AS product_type,
+             COALESCE(al.payment_method, 'cash') AS mode,
+             al.amount::text AS amount,
+             'accepted' AS status,
+             li.updated_at AS collected_at,
+             li.updated_at AS created_at,
+             'Office Counter (Manual Loan Repayment)' AS source_remark
+        FROM loan_instalment li
+        JOIN loan l ON l.id = li.loan_id
+        JOIN customer c ON c.id = l.customer_id,
+        LATERAL (
+          SELECT (elem->>'paidOn')::date AS paid_on,
+                 (elem->>'amount')::numeric AS amount,
+                 (elem->>'paymentMethod')::text AS payment_method,
+                 (elem->>'sourceCollectionId')::text AS source_collection_id
+            FROM jsonb_array_elements(li.allocation) AS elem
+        ) al
+       WHERE al.source_collection_id IS NULL
+         AND al.paid_on >= $1::date
+         AND al.paid_on <= $2::date
+         ${bDateFilter ? `AND al.paid_on = $${bDateParamIdx}::date` : ''}
+         ${productFilter && productFilter !== 'loan' ? 'AND false' : ''}
+         ${modeFilter ? `AND al.payment_method = $${modeParamIdx}` : ''}
+
+      UNION ALL
+
+      -- Office counter daily/savings deposits (recorded at branch counter without agent app)
+      SELECT at.value_date::text AS business_date,
+             'OFFICE' AS agent_code,
+             c.full_name,
+             c.customer_number,
+             'savingsDeposit' AS product_type,
+             COALESCE(at.payment_method, 'cash') AS mode,
+             at.amount::text AS amount,
+             'accepted' AS status,
+             at.created_at AS collected_at,
+             at.created_at AS created_at,
+             'Office Counter (Manual Deposit)' AS source_remark
+        FROM account_transaction at
+        JOIN savings_account sa ON sa.id = at.savings_account_id
+        JOIN customer c ON c.id = sa.customer_id
+       WHERE at.transaction_type = 'deposit'
+         AND at.value_date >= $1::date
+         AND at.value_date <= $2::date
+         AND (at.description IS NULL OR at.description NOT LIKE 'Doorstep collection%')
+         ${bDateFilter ? `AND at.value_date = $${bDateParamIdx}::date` : ''}
+         ${productFilter && productFilter !== 'savingsDeposit' && productFilter !== 'dailyDeposit' ? 'AND false' : ''}
+         ${modeFilter ? `AND at.payment_method = $${modeParamIdx}` : ''}
+      ` : ''}
+    )
+    SELECT business_date, agent_code, full_name, customer_number, product_type, mode, amount, status, collected_at, source_remark
+      FROM all_collections
+     ORDER BY business_date ASC, agent_code ASC, created_at ASC
      LIMIT ${MAX_REPORT_ROWS}`;
-    const result = await query(sql, where.params);
+    const result = await query(sql, queryParams);
     const rows = result.rows.map((r) => [
         r.business_date,
         r.agent_code,
@@ -230,9 +326,10 @@ const builderDailyCollectionRegister = async (params) => {
         r.amount,
         r.status,
         stampToDisplay(r.collected_at),
+        r.source_remark,
     ]);
     return {
-        columns: ['Business Date', 'Agent Code', 'Customer', 'Customer No', 'Product Type', 'Mode', 'Amount', 'Status', 'Collected At'],
+        columns: ['Business Date', 'Agent / Source', 'Customer', 'Customer No', 'Product Type', 'Mode', 'Amount', 'Status', 'Collected At', 'Source / Remark'],
         rows,
     };
 };

@@ -148,16 +148,27 @@ function nextStep(date, frequency) {
  *   interestPaise = depositPaise × rateE4 × tenureMonths / 12_000_000
  * where rateE4 = round(rate × 10_000).
  */
-function simpleInterest(deposit, rate, tenureMonths) {
+function simpleInterest(deposit, rate, tenureMonths, startDate, maturityDate) {
     // Damduppat scheme (दामदुप्पट योजना): at 72 months (6 years), returns double the principal (100% interest)
     if (tenureMonths === 72 && Number(rate) >= 16.66 && Number(rate) <= 16.67) {
         return fromCents(toCents(deposit));
     }
     const rateE4 = BigInt(Math.round(Number(rate) * 10_000));
+    if (startDate && maturityDate) {
+        const start = new Date(startDate);
+        const end = new Date(maturityDate);
+        const diffMs = end.getTime() - start.getTime();
+        const days = Math.round(diffMs / (1000 * 60 * 60 * 24));
+        if (days > 0 && Math.abs(days - tenureMonths * 30.4375) > 2) {
+            // Days-based interest for custom periods (e.g. 105 days): deposit * rate * days / 36500
+            const interestCents = (toCents(deposit) * rateE4 * BigInt(days)) / (36500n * 10000n);
+            return fromCents(interestCents);
+        }
+    }
     const interestCents = (toCents(deposit) * rateE4 * BigInt(tenureMonths)) / 12000000n;
     return fromCents(interestCents);
 }
-/** Throws a lock error when an FD account cannot be pledged twice. */
+/** Throws a lock error when an FD account is secured against an active loan. */
 async function assertFdNotPledged(client, fdAccountId) {
     const existing = await client.query(`SELECT l.id
        FROM loan l
@@ -165,7 +176,7 @@ async function assertFdNotPledged(client, fdAccountId) {
         AND l.status <> ALL($2::text[])
       LIMIT 1`, [fdAccountId, TERMINAL_LOAN_STATUSES]);
     if (existing.rows[0]) {
-        throw new BusinessRuleError('This FD account is already secured against an active loan; release it before pledging again', 'FD_ALREADY_PLEDGED');
+        throw new BusinessRuleError('This FD account is secured against an active loan; the loan must be settled or closed before releasing, closing, or settling the FD', 'FD_ALREADY_PLEDGED');
     }
 }
 /** Selects the newest active rate card covering `deposit` at `tenure`. */
@@ -435,13 +446,14 @@ export async function openAccount(actor, input, meta = {}) {
         if (!card.is_active) {
             throw new BusinessRuleError('This FD rate card is not active', 'RATE_CARD_INACTIVE');
         }
-        if (input.tenureMonths !== card.tenure_months) {
+        const hasCustomTerms = Boolean(input.maturityDate || input.rateIsFixed || input.interestRate);
+        if (!hasCustomTerms && input.tenureMonths !== card.tenure_months) {
             throw new BusinessRuleError(`Tenure ${input.tenureMonths} months does not match the rate card tenure of ${card.tenure_months} months`, 'TENURE_MISMATCH');
         }
-        if (compareMoney(input.depositAmount, card.min_amount) < 0) {
+        if (!hasCustomTerms && compareMoney(input.depositAmount, card.min_amount) < 0) {
             throw new BusinessRuleError(`Deposit is below the rate card minimum of ${card.min_amount}`, 'DEPOSIT_BELOW_BAND_MIN');
         }
-        if (compareMoney(input.depositAmount, card.max_amount) > 0) {
+        if (!hasCustomTerms && compareMoney(input.depositAmount, card.max_amount) > 0) {
             throw new BusinessRuleError(`Deposit exceeds the rate card maximum of ${card.max_amount}`, 'DEPOSIT_ABOVE_BAND_MAX');
         }
         // Global deposit window (spec §11.1 — ₹1,000 to ₹1,00,000).
@@ -452,9 +464,11 @@ export async function openAccount(actor, input, meta = {}) {
             throw new BusinessRuleError(`Maximum FD deposit is ${BUSINESS_RULES.FD_MAX_AMOUNT}`, 'DEPOSIT_ABOVE_MAX');
         }
         const startDate = input.startDate ?? istBusinessDate();
-        const maturityDate = addMonths(startDate, input.tenureMonths);
+        const maturityDate = input.maturityDate ?? addMonths(startDate, Math.floor(input.tenureMonths));
         const sequence = await allocateSequence(client, 'fd_account');
         const accountNumber = sequence.formatted;
+        const bookedRate = input.interestRate ?? card.interest_rate;
+        const roundedTenure = Math.max(1, Math.round(input.tenureMonths));
         let accountId;
         try {
             const insert = await client.query(`INSERT INTO fd_account
@@ -469,8 +483,8 @@ export async function openAccount(actor, input, meta = {}) {
                 input.rateCardId,
                 input.branchId,
                 input.depositAmount,
-                input.tenureMonths,
-                card.interest_rate,
+                roundedTenure,
+                bookedRate,
                 input.rateIsFixed ?? true,
                 startDate,
                 maturityDate,
@@ -781,6 +795,7 @@ export async function lien(actor, accountId, input, meta = {}) {
             if (!lienRow) {
                 throw new BusinessRuleError('No active lien exists on this FD account', 'NO_ACTIVE_LIEN');
             }
+            await assertFdNotPledged(client, accountId);
             await client.query(`UPDATE fd_lien
             SET status = 'released',
                 released_on = now(),
@@ -823,6 +838,7 @@ export async function closeEarly(actor, accountId, input, meta = {}) {
         if (!CLOSEABLE_STATUSES.includes(account.status)) {
             throw new BusinessRuleError(`Only an active FD account can be closed early (current status: ${account.status})`, 'ACCOUNT_NOT_CLOSEABLE');
         }
+        await assertFdNotPledged(client, accountId);
         const closedOn = istBusinessDate();
         const card = await selectRateCardById(client, account.rate_card_id);
         // Penalty applies only when the deposit is closed inside the rate card's
@@ -886,6 +902,7 @@ export async function closeAccount(actor, accountId, input, meta = {}) {
         if (account.status === 'closed') {
             return loadFdAccountDetail(client, accountId);
         }
+        await assertFdNotPledged(client, accountId);
         // Release any active lien
         await client.query(`UPDATE fd_lien
           SET status = 'released', released_on = now(), released_by = $1, updated_at = now()
@@ -929,8 +946,9 @@ export async function maturityAction(actor, accountId, input, meta = {}) {
         if (account.status === 'under_lien') {
             throw new BusinessRuleError('Release the lien before settling this FD account', 'ACCOUNT_UNDER_LIEN');
         }
+        await assertFdNotPledged(client, accountId);
         const deposit = account.deposit_amount;
-        const interest = simpleInterest(deposit, account.interest_rate, account.tenure_months);
+        const interest = simpleInterest(deposit, account.interest_rate, account.tenure_months, account.start_date, account.maturity_date);
         const action = input.action;
         const valueDate = businessDate;
         const recordInterestPayout = async (mode, savingsTransactionId) => {
@@ -1250,7 +1268,7 @@ export async function loanAgainstFd(actor, accountId, input, meta = {}) {
             const next = nextStep(cursor, frequency);
             if (next > maturity)
                 break;
-            dueDates.push(toWorkingDay(next));
+            dueDates.push(frequency === 'daily' ? next : toWorkingDay(next));
             cursor = next;
         }
         if (dueDates.length === 0) {

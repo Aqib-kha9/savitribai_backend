@@ -184,12 +184,12 @@ const RD_SCHEMES = [
  *   दामदुप्पट योजना (Damduppat Yojana - 72 Months / 6 Years) → 16.6667% (Double Principal)
  */
 const FD_RATE_CARD = [
-  { minAmount: '1000.00', maxAmount: '100000.00', tenureMonths: 1, interestRate: '7.0000' },
-  { minAmount: '1000.00', maxAmount: '100000.00', tenureMonths: 6, interestRate: '8.0000' },
-  { minAmount: '1000.00', maxAmount: '100000.00', tenureMonths: 12, interestRate: '10.0000' },
-  { minAmount: '1000.00', maxAmount: '100000.00', tenureMonths: 24, interestRate: '12.0000' },
-  { minAmount: '1000.00', maxAmount: '100000.00', tenureMonths: 36, interestRate: '12.0000' },
-  { minAmount: '1000.00', maxAmount: '100000.00', tenureMonths: 72, interestRate: '16.6667' },
+  { minAmount: '1000.00', maxAmount: '5000000.00', tenureMonths: 1, interestRate: '7.0000' },
+  { minAmount: '1000.00', maxAmount: '5000000.00', tenureMonths: 6, interestRate: '8.0000' },
+  { minAmount: '1000.00', maxAmount: '5000000.00', tenureMonths: 12, interestRate: '10.0000' },
+  { minAmount: '1000.00', maxAmount: '5000000.00', tenureMonths: 24, interestRate: '12.0000' },
+  { minAmount: '1000.00', maxAmount: '5000000.00', tenureMonths: 36, interestRate: '12.0000' },
+  { minAmount: '1000.00', maxAmount: '5000000.00', tenureMonths: 72, interestRate: '16.6667' },
 ];
 
 /** Loan products (spec §12). */
@@ -199,7 +199,7 @@ const LOAN_PRODUCTS = [
     name: 'Personal Loan',
     category: 'personal' as const,
     minAmount: '5000.00',
-    maxAmount: '100000.00',
+    maxAmount: '1000000.00',
     minTenureMonths: 3,
     maxTenureMonths: 36,
     interestMethod: 'flat' as const,
@@ -233,7 +233,7 @@ const LOAN_PRODUCTS = [
     name: 'Loan Against FD (Lien)',
     category: 'personal' as const,
     minAmount: '1000.00',
-    maxAmount: '85000.00',
+    maxAmount: '4250000.00',
     minTenureMonths: 3,
     maxTenureMonths: 36,
     interestMethod: 'flat' as const,
@@ -352,7 +352,7 @@ const LOAN_PRODUCTS = [
     name: 'दैनिक कर्ज (Daily Loan)',
     category: 'personal' as const,
     minAmount: '1000.00',
-    maxAmount: '50000.00',
+    maxAmount: '500000.00',
     minTenureMonths: 3,
     maxTenureMonths: 12,
     interestMethod: 'flat' as const,

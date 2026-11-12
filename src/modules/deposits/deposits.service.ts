@@ -155,6 +155,7 @@ export interface TransactionView {
   performedByName: string | null;
   reversalOf: string | null;
   adjustmentId: string | null;
+  isReversed?: boolean;
   createdAt: string;
 }
 
@@ -264,6 +265,7 @@ type TransactionRow = {
   reversal_of: string | null;
   adjustment_id: string | null;
   withdrawal_request_id: string | null;
+  is_reversed?: boolean;
   created_at: Date;
 };
 
@@ -557,7 +559,15 @@ async function selectTransactionById(client: PoolClient, transactionId: string):
             t.payment_method, t.reference_number, t.description,
             t.performed_by, pb.full_name AS performed_by_name, t.performed_source,
             t.reversal_of, t.adjustment_id,
-            t.withdrawal_request_id, t.created_at
+            t.withdrawal_request_id,
+            (EXISTS(
+              SELECT 1 FROM account_transaction rev
+               WHERE rev.reversal_of = t.id
+            ) OR EXISTS(
+              SELECT 1 FROM account_adjustment adj
+               WHERE adj.original_transaction_id = t.id
+            )) AS is_reversed,
+            t.created_at
        FROM account_transaction t
        JOIN savings_account sa ON sa.id = t.savings_account_id
        LEFT JOIN staff pb ON pb.id = t.performed_by
@@ -586,6 +596,7 @@ function toTransactionView(row: TransactionRow): TransactionView {
     performedByName: row.performed_by_name,
     reversalOf: row.reversal_of,
     adjustmentId: row.adjustment_id,
+    isReversed: Boolean(row.is_reversed || row.adjustment_id || row.reversal_of),
     createdAt: row.created_at.toISOString(),
   };
 }
@@ -1494,7 +1505,15 @@ export async function listTransactions(
             t.payment_method, t.reference_number, t.description,
             t.performed_by, pb.full_name AS performed_by_name, t.performed_source,
             t.reversal_of, t.adjustment_id,
-            t.withdrawal_request_id, t.created_at,
+            t.withdrawal_request_id,
+            (EXISTS(
+              SELECT 1 FROM account_transaction rev
+               WHERE rev.reversal_of = t.id
+            ) OR EXISTS(
+              SELECT 1 FROM account_adjustment adj
+               WHERE adj.original_transaction_id = t.id
+            )) AS is_reversed,
+            t.created_at,
             count(*) OVER()::int AS total
        FROM account_transaction t
        JOIN savings_account sa ON sa.id = t.savings_account_id
@@ -1541,6 +1560,16 @@ export async function createAdjustment(
     if (alreadyAdjusted.rows.length > 0) {
       throw new BusinessRuleError(
         'The original transaction has already been adjusted',
+        'ORIGINAL_TRANSACTION_ALREADY_ADJUSTED',
+      );
+    }
+    const alreadyReversed = await client.query(
+      `SELECT 1 FROM account_transaction WHERE reversal_of = $1 LIMIT 1`,
+      [input.originalTransactionId],
+    );
+    if (alreadyReversed.rows.length > 0) {
+      throw new BusinessRuleError(
+        'The original transaction has already been reversed',
         'ORIGINAL_TRANSACTION_ALREADY_ADJUSTED',
       );
     }
@@ -1693,7 +1722,15 @@ export async function getStatement(
               t.payment_method, t.reference_number, t.description,
               t.performed_by, pb.full_name AS performed_by_name, t.performed_source,
               t.reversal_of, t.adjustment_id,
-              t.withdrawal_request_id, t.created_at,
+              t.withdrawal_request_id,
+              (EXISTS(
+                SELECT 1 FROM account_transaction rev
+                 WHERE rev.reversal_of = t.id
+              ) OR EXISTS(
+                SELECT 1 FROM account_adjustment adj
+                 WHERE adj.original_transaction_id = t.id
+              )) AS is_reversed,
+              t.created_at,
               count(*) OVER()::int AS total
          FROM account_transaction t
          JOIN savings_account sa ON sa.id = t.savings_account_id

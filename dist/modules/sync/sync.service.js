@@ -138,6 +138,7 @@ const SUBMISSION_SELECT = `ce.id, ce.idempotency_key, ce.customer_id, c.full_nam
       ce.business_date, ce.collected_at, ce.submitted_at, ce.submitted_from_offline,
       ce.offline_late, ce.created_at,
       cr.receipt_number,
+      COALESCE(cr.acknowledged, false) AS acknowledged,
       COALESCE(cr.account_number, sa.account_number, rda.account_number, l.loan_number, '') AS account_number,
       COALESCE(ce.savings_account_id, ce.rd_account_id, ce.loan_id) AS account_id,
       COALESCE(l.total_paid, rda.total_paid, sa.current_balance, 0)::float8 AS total_collected_so_far,
@@ -164,6 +165,7 @@ function toSubmissionStatusView(row) {
         accountNumber: row.account_number ?? null,
         accountId: row.account_id ?? null,
         totalCollectedSoFar: row.total_collected_so_far != null ? Number(row.total_collected_so_far) : null,
+        acknowledged: Boolean(row.acknowledged),
     };
 }
 /**

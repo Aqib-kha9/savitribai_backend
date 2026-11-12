@@ -81,6 +81,7 @@ const COLLECTION_SELECT = `ce.id, ce.idempotency_key, ce.agent_id, a.agent_code,
       COALESCE(sa.id, ra.id, l.id) AS account_id,
       COALESCE(sa.account_number, ra.account_number, l.loan_number) AS account_number,
       COALESCE(dp.name, rs.name, lp.name) AS product_label,
+      COALESCE(l.total_paid, ra.total_paid, sa.current_balance, 0)::float8 AS total_collected_so_far,
       cr.receipt_number, cr.receipt_kind, COALESCE(cr.acknowledged, false) AS acknowledged,
       rv.decision AS review_decision, rv.remarks AS review_remarks, rv.reviewed_at`;
 const COLLECTION_FROM = `FROM collection_entry ce
@@ -124,6 +125,7 @@ function toSubmissionView(row) {
         accountId: row.account_id,
         accountNumber: row.account_number,
         productLabel: row.product_label,
+        totalCollectedSoFar: row.total_collected_so_far != null ? Number(row.total_collected_so_far) : null,
     };
 }
 function toCollectionView(row) {
