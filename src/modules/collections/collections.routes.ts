@@ -212,7 +212,7 @@ collectionsRouter.get(
 collectionsRouter.post(
   '/emergency-approval',
   authenticate,
-  requireRole('managing_director', 'manager', 'president', 'vice_president'),
+  requireRole('managing_director', 'manager', 'president', 'vice_president', 'cashier', 'clerk'),
   validateBody(emergencyApprovalSchema),
   async (request, response) => {
     const actor = authOf(request);

@@ -122,7 +122,7 @@ collectionsRouter.get('/reports/collection-totals', authenticate, requirePermiss
 // POST /api/v1/collections/emergency-approval — approves a collection from
 // an unassigned customer; the entry is created directly in 'accepted' state
 // (§14.1). Literal path registered BEFORE /:id routes.
-collectionsRouter.post('/emergency-approval', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president'), validateBody(emergencyApprovalSchema), async (request, response) => {
+collectionsRouter.post('/emergency-approval', authenticate, requireRole('managing_director', 'manager', 'president', 'vice_president', 'cashier', 'clerk'), validateBody(emergencyApprovalSchema), async (request, response) => {
     const actor = authOf(request);
     const input = request.body;
     const collection = await approveEmergencyCollection(actor, input, requestMeta(request));

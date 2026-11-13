@@ -208,6 +208,15 @@ async function runSelfHealingMigrations(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_collection_posted ON collection_entry(posted_at) WHERE NOT is_deleted;
     `);
 
+    // Ensure all savings accounts are active so collections & counter deposits are never blocked
+    await query(`
+      UPDATE savings_account
+         SET status = 'active',
+             approved_on = COALESCE(approved_on, opened_on, CURRENT_DATE),
+             approved_by = COALESCE(approved_by, opened_by)
+       WHERE status = 'pending_approval';
+    `);
+
     // Backfill any unposted collections to their respective product accounts
     const backfillResult = await backfillUnpostedCollections();
     if (backfillResult.totalFound > 0) {

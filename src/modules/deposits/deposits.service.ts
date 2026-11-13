@@ -821,8 +821,8 @@ export async function createAccount(
       const insert = await client.query<IdRow>(
         `INSERT INTO savings_account
            (account_number, customer_id, product_id, branch_id, status,
-            current_balance, interest_rate, opened_by, opened_on, maturity_date)
-         VALUES ($1, $2, $3, $4, 'pending_approval', $5, $6, $7, $8, $9)
+            current_balance, interest_rate, opened_by, opened_on, maturity_date, approved_by, approved_on)
+         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $7, $8)
          RETURNING id`,
         [accountNumber, input.customerId, input.productId, input.branchId, input.openingAmount, interestRate, actor.staffId, openedOn, maturityDate],
       );
@@ -873,7 +873,7 @@ export async function createAccount(
         branchId: input.branchId,
         openingAmount: input.openingAmount,
         openedOn,
-        status: 'pending_approval',
+        status: 'active',
         openedBy: actor.staffId,
       },
     });
@@ -1278,7 +1278,18 @@ export async function executeSavingsDeposit(
 ): Promise<TransactionView> {
   const account = await selectAccountById(client, accountId);
   if (!account) throw new NotFoundError('Savings account');
-  if (account.status !== 'active') {
+  if (account.status === 'pending_approval') {
+    await client.query(
+      `UPDATE savings_account
+          SET status = 'active',
+              approved_by = COALESCE(approved_by, $1),
+              approved_on = COALESCE(approved_on, CURRENT_DATE),
+              updated_at = now()
+        WHERE id = $2`,
+      [actor.staffId, accountId],
+    );
+    account.status = 'active';
+  } else if (account.status !== 'active') {
     throw new BusinessRuleError(
       'Transactions can only be posted to an active savings account',
       'ACCOUNT_NOT_ACTIVE',
@@ -1337,7 +1348,18 @@ export async function postTransaction(
   const posted = await transaction<TransactionView>(async (client) => {
     const account = await selectAccountById(client, accountId);
     if (!account) throw new NotFoundError('Savings account');
-    if (account.status !== 'active') {
+    if (account.status === 'pending_approval') {
+      await client.query(
+        `UPDATE savings_account
+            SET status = 'active',
+                approved_by = COALESCE(approved_by, $1),
+                approved_on = COALESCE(approved_on, CURRENT_DATE),
+                updated_at = now()
+          WHERE id = $2`,
+        [actor.staffId, accountId],
+      );
+      account.status = 'active';
+    } else if (account.status !== 'active') {
       throw new BusinessRuleError(
         'Transactions can only be posted to an active savings account',
         'ACCOUNT_NOT_ACTIVE',
