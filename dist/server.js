@@ -178,7 +178,17 @@ async function runSelfHealingMigrations() {
          SET status = 'active',
              approved_on = COALESCE(approved_on, opened_on, CURRENT_DATE),
              approved_by = COALESCE(approved_by, opened_by)
-       WHERE status = 'pending_approval';
+       WHERE status != 'frozen';
+
+      UPDATE savings_account
+         SET status = 'active',
+             approved_on = COALESCE(approved_on, opened_on, CURRENT_DATE),
+             approved_by = COALESCE(approved_by, opened_by)
+       WHERE id IN (
+         SELECT savings_account_id 
+           FROM collection_entry 
+          WHERE posted_at IS NULL AND NOT is_deleted AND savings_account_id IS NOT NULL
+       );
     `);
         // Backfill any unposted collections to their respective product accounts
         const backfillResult = await backfillUnpostedCollections();

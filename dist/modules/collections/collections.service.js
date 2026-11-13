@@ -479,6 +479,12 @@ export async function applyCollectionEntryToAccount(client, collectionId, actor,
     }
     else if ((entry.product_type === 'savingsDeposit' || entry.product_type === 'dailyDeposit') &&
         entry.savings_account_id) {
+        await client.query(`UPDATE savings_account
+          SET status = 'active',
+              approved_by = COALESCE(approved_by, $1),
+              approved_on = COALESCE(approved_on, CURRENT_DATE),
+              updated_at = now()
+        WHERE id = $2 AND status != 'frozen'`, [actor.staffId, entry.savings_account_id]);
         await executeSavingsDeposit(client, actor, entry.savings_account_id, {
             amount: entry.amount,
             paymentMethod,

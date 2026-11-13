@@ -1278,22 +1278,24 @@ export async function executeSavingsDeposit(
 ): Promise<TransactionView> {
   const account = await selectAccountById(client, accountId);
   if (!account) throw new NotFoundError('Savings account');
-  if (account.status === 'pending_approval') {
-    await client.query(
-      `UPDATE savings_account
-          SET status = 'active',
-              approved_by = COALESCE(approved_by, $1),
-              approved_on = COALESCE(approved_on, CURRENT_DATE),
-              updated_at = now()
-        WHERE id = $2`,
-      [actor.staffId, accountId],
-    );
-    account.status = 'active';
-  } else if (account.status !== 'active') {
-    throw new BusinessRuleError(
-      'Transactions can only be posted to an active savings account',
-      'ACCOUNT_NOT_ACTIVE',
-    );
+  if (account.status !== 'active') {
+    if (account.status !== 'frozen') {
+      await client.query(
+        `UPDATE savings_account
+            SET status = 'active',
+                approved_by = COALESCE(approved_by, $1),
+                approved_on = COALESCE(approved_on, CURRENT_DATE),
+                updated_at = now()
+          WHERE id = $2`,
+        [actor.staffId, accountId],
+      );
+      account.status = 'active';
+    } else {
+      throw new BusinessRuleError(
+        'Transactions cannot be posted to a frozen savings account',
+        'ACCOUNT_FROZEN',
+      );
+    }
   }
 
   const direction: Direction = 'credit';
@@ -1348,22 +1350,24 @@ export async function postTransaction(
   const posted = await transaction<TransactionView>(async (client) => {
     const account = await selectAccountById(client, accountId);
     if (!account) throw new NotFoundError('Savings account');
-    if (account.status === 'pending_approval') {
-      await client.query(
-        `UPDATE savings_account
-            SET status = 'active',
-                approved_by = COALESCE(approved_by, $1),
-                approved_on = COALESCE(approved_on, CURRENT_DATE),
-                updated_at = now()
-          WHERE id = $2`,
-        [actor.staffId, accountId],
-      );
-      account.status = 'active';
-    } else if (account.status !== 'active') {
-      throw new BusinessRuleError(
-        'Transactions can only be posted to an active savings account',
-        'ACCOUNT_NOT_ACTIVE',
-      );
+    if (account.status !== 'active') {
+      if (account.status !== 'frozen') {
+        await client.query(
+          `UPDATE savings_account
+              SET status = 'active',
+                  approved_by = COALESCE(approved_by, $1),
+                  approved_on = COALESCE(approved_on, CURRENT_DATE),
+                  updated_at = now()
+            WHERE id = $2`,
+          [actor.staffId, accountId],
+        );
+        account.status = 'active';
+      } else {
+        throw new BusinessRuleError(
+          'Transactions cannot be posted to a frozen savings account',
+          'ACCOUNT_FROZEN',
+        );
+      }
     }
 
     const isDeposit = input.transactionType === 'deposit';
