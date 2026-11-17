@@ -142,7 +142,10 @@ export function mapDatabaseError(error: PgErrorLike): AppError | null {
     case '23503': // foreign_key_violation
       return new BadRequestError('Referenced record does not exist', 'FK_VIOLATION');
     case '23514': // check_violation
-      return new BusinessRuleError('Value violates a data integrity rule', 'CHECK_VIOLATION');
+      return new BusinessRuleError(
+        `Value violates a data integrity rule (${error.constraint ?? error.message})`,
+        'CHECK_VIOLATION',
+      );
     case '40001': // serialization_failure
       return new ConflictError('Concurrent update detected, please retry', 'SERIALIZATION_CONFLICT');
     case '23P01': // exclusion_violation

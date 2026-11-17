@@ -171,35 +171,57 @@ async function runSelfHealingMigrations(): Promise<void> {
     `);
 
     // Convert any savings accounts created under SAV-STD or SAV-DLY that were mistakenly assigned DDA numbers
-    await query(`
-      UPDATE savings_account
-         SET account_number = REPLACE(account_number, 'DDA', 'SBA'),
-             maturity_date = NULL
-       WHERE product_id IN (SELECT id FROM deposit_product WHERE code IN ('SAV-STD', 'SAV-DLY'))
-         AND account_number LIKE 'DDA%';
-    `);
+    try {
+      await query(`
+        UPDATE savings_account
+           SET account_number = REPLACE(account_number, 'DDA', 'SBA')
+         WHERE product_id IN (SELECT id FROM deposit_product WHERE code IN ('SAV-STD', 'SAV-DLY'))
+           AND account_number LIKE 'DDA%';
+      `);
+    } catch (migErr) {
+      console.warn('Notice: savings_account DDA->SBA fix:', migErr);
+    }
 
-    // Update loan product and FD rate card ceilings for flexible business limits
-    await query(`
-      UPDATE fd_rate_card
-         SET max_amount = 5000000.00
-       WHERE max_amount < 5000000.00;
+    // Update loan product and FD rate card ceilings for flexible business limits (up to 50 Lakhs)
+    try {
+      await query(`
+        UPDATE fd_rate_card
+           SET max_amount = 5000000.00
+         WHERE max_amount < 5000000.00;
 
-      UPDATE loan_product
-         SET max_amount = 500000.00
-       WHERE code = 'LN-DLY' AND max_amount < 500000.00;
+        UPDATE loan_product
+           SET max_amount = 500000.00
+         WHERE code = 'LN-DLY' AND max_amount < 500000.00;
 
-      UPDATE loan_product
-         SET max_amount = 1000000.00
-       WHERE code = 'LN-PER' AND max_amount < 1000000.00;
+        UPDATE loan_product
+           SET max_amount = 1000000.00
+         WHERE code = 'LN-PER' AND max_amount < 1000000.00;
 
-      UPDATE loan_product
-         SET max_amount = 4250000.00
-       WHERE code = 'LN-FD' AND max_amount < 4250000.00;
+        UPDATE loan_product
+           SET max_amount = 4250000.00
+         WHERE code = 'LN-FD' AND max_amount < 4250000.00;
 
-      ALTER TABLE fd_account DROP CONSTRAINT IF EXISTS fd_account_deposit_amount_check;
-      ALTER TABLE fd_account ADD CONSTRAINT fd_account_deposit_amount_check CHECK (deposit_amount >= 1000.00 AND deposit_amount <= 5000000.00);
-    `);
+        DO $$
+        DECLARE
+            r RECORD;
+        BEGIN
+            FOR r IN (
+                SELECT conname
+                FROM pg_constraint
+                WHERE conrelid = 'fd_account'::regclass
+                  AND contype = 'c'
+                  AND pg_get_constraintdef(oid) LIKE '%deposit_amount%'
+            ) LOOP
+                EXECUTE 'ALTER TABLE fd_account DROP CONSTRAINT IF EXISTS ' || quote_ident(r.conname);
+            END LOOP;
+        END $$;
+
+        ALTER TABLE fd_account ADD CONSTRAINT fd_account_deposit_amount_check CHECK (deposit_amount >= 1000.00 AND deposit_amount <= 5000000.00);
+      `);
+      console.log('FD account deposit ceiling successfully raised to 50,00,000 (50 Lakhs) in DB constraints.');
+    } catch (migErr) {
+      console.warn('Notice: fd_account deposit ceiling constraint update:', migErr);
+    }
 
     // Ensure collection_entry posted_at column exists
     await query(`
