@@ -219,6 +219,19 @@ async function runSelfHealingMigrations() {
         if (backfillResult.totalFound > 0) {
             console.log(`Backfilled ${backfillResult.totalApplied}/${backfillResult.totalFound} collections to account ledgers.`);
         }
+        // Ensure organisation table has the exact official registration number
+        try {
+            await query(`
+        UPDATE organisation
+           SET registration_number = 'Yavatmal/RSR/CR/2026/0659'
+         WHERE registration_number IS NULL 
+            OR registration_number != 'Yavatmal/RSR/CR/2026/0659';
+      `);
+            console.log('Organisation registration number verified & synced: Yavatmal/RSR/CR/2026/0659');
+        }
+        catch (orgErr) {
+            console.warn('Notice: organisation registration number sync:', orgErr);
+        }
         console.log('Self-healing migrations: receipt sequences, savings accounts & doorstep collections configured and synced.');
     }
     catch (err) {

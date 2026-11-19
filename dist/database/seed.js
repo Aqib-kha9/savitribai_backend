@@ -9,7 +9,7 @@ import { AUDIT_ACTIONS, appendAuditEvent } from '../audit/audit-writer.js';
 const ORG = {
     legalName: 'Savitribai Fule Mahila Nagari Sahakari Patsanstha Maryadit Yavatmal',
     displayName: 'Savitribai Fule Mahila Nagari Patsanstha',
-    registrationNumber: 'Yavatmal / RSR/CR/2026/0659',
+    registrationNumber: 'Yavatmal/RSR/CR/2026/0659',
     legalAddress: 'Rajgruha Apartment, Devangana Society, Waghapur Lohara Bypass, Yavatmal - 445001',
     phone: '7776961661',
     email: 'savitribaifulepatsanstha@gmail.com',

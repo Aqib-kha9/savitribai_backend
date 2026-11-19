@@ -49,7 +49,7 @@ import { BadRequestError, BusinessRuleError, ConflictError, ForbiddenError, Inte
 /** Org header shown on every generated PDF (spec §17.4 official layout). */
 const ORG_LEGAL_NAME = 'Savitribai Fule Mahila Nagari Patsanstha';
 /** Second header line — registration / branch reference. */
-const ORG_HEADER_LINE = 'Yavatmal / RSR/CR/2026/0659';
+const ORG_HEADER_LINE = 'Reg. No, Yavatmal/RSR/CR/2026/0659';
 /** Footer disclaimer line. */
 const PDF_FOOTER_LEGAL = 'This is a system-generated report. Amounts are in INR. Subject to verification with the books of account.';
 /** Hard cap on rows rendered by one generated report (memory guard). */
